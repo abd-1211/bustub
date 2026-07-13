@@ -15,11 +15,14 @@
  * For range scan of b+ tree
  */
 #pragma once
+#include <cstddef>
+#include <memory>
 #include <utility>
 #include "buffer/traced_buffer_pool_manager.h"
 #include "common/config.h"
 #include "common/macros.h"
 #include "storage/page/b_plus_tree_leaf_page.h"
+#include "storage/page/page_guard.h"
 
 namespace bustub {
 
@@ -30,8 +33,10 @@ FULL_INDEX_TEMPLATE_ARGUMENTS_DEFN
 class IndexIterator {
  public:
   // you may define your own constructor based on your member variables
-  IndexIterator();
+  IndexIterator() ;
   ~IndexIterator();  // NOLINT
+  //custom constructor
+  IndexIterator(std::shared_ptr<TracedBufferPoolManager> bpm, ReadPageGuard leaf_guard ,int curr_idx);
 
   auto IsEnd() -> bool;
 
@@ -39,12 +44,31 @@ class IndexIterator {
 
   auto operator++() -> IndexIterator &;
 
-  auto operator==(const IndexIterator &itr) const -> bool { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+  auto operator==(const IndexIterator &itr) const -> bool { 
+   //UNIMPLEMENTED("TODO(P2): Add implementation."); 
+    if(bpm_ == nullptr && itr.bpm_ == nullptr)
+    {
+      return true;
+    }
+    if(bpm_ == nullptr || itr.bpm_ == nullptr)
+    {
+      return false;
+    }
+    return leaf_guard_.GetPageId() == itr.leaf_guard_.GetPageId() && curr_idx_ == itr.curr_idx_;
+  }
 
-  auto operator!=(const IndexIterator &itr) const -> bool { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+  auto operator!=(const IndexIterator &itr) const -> bool { //UNIMPLEMENTED("TODO(P2): Add implementation."); 
+    return !(*this == itr);
+  }
 
  private:
   // add your own private member variables here
+  std::shared_ptr<TracedBufferPoolManager> bpm_{nullptr};
+  ReadPageGuard leaf_guard_;
+  int curr_idx_{0};
+  KeyType curr_key_;
+  ValueType curr_val_;
+
 };
 
 }  // namespace bustub

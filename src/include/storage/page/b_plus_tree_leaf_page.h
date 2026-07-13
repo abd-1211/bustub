@@ -73,7 +73,10 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto GetNextPageId() const -> page_id_t;
   void SetNextPageId(page_id_t next_page_id);
   auto KeyAt(int index) const -> KeyType;
-
+  void SetKeyAt(int index, const KeyType &key); // to set the location of a key
+  auto ValueAt(int index) const -> ValueType; // to get the value of a key at an index
+  void SetValueAt(int index, const ValueType &value); // to set the value of a key at a given index
+  auto GetMinSize() const -> int { return GetMaxSize() / 2; }
   /**
    * @brief for test only return a string representing all keys in
    * this leaf page formatted as "(tombkey1, tombkey2, ...|key1,key2,key3,...)"
@@ -118,6 +121,7 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   KeyType key_array_[LEAF_PAGE_SLOT_CNT];
   ValueType rid_array_[LEAF_PAGE_SLOT_CNT];
   // (Spring 2025) Feel free to add more fields and helper functions below if needed
+
 };
 
 }  // namespace bustub
