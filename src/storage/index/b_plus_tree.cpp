@@ -80,14 +80,16 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result
   ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
   auto header_pg = header_guard.As<BPlusTreeHeaderPage>();
   auto header_root_id = header_pg->root_page_id_;
-  header_guard.Drop();
+  
   if(header_root_id == INVALID_PAGE_ID) // check if tree even exists
   {
+    header_guard.Drop();
     return false;
   }
   
   ReadPageGuard curr_guard = bpm_->ReadPage(header_root_id);
   auto curr_page = curr_guard.As<BPlusTreePage>();
+  header_guard.Drop();
   while(!curr_page->IsLeafPage())
   {
     auto internal = curr_guard.As<InternalPage>();
@@ -158,13 +160,15 @@ auto BPLUSTREE_TYPE::OptimisticInsert(const KeyType &key, const ValueType &value
   ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
   auto header_pg = header_guard.As<BPlusTreeHeaderPage>();
   page_id_t root_pg_id = header_pg->root_page_id_;
-  header_guard.Drop();
+  
 
   if (root_pg_id == INVALID_PAGE_ID) {
+    header_guard.Drop();
     return std::nullopt; // empty tree needs pessimistic
   }
 
   ReadPageGuard curr_guard = bpm_->ReadPage(root_pg_id);
+  header_guard.Drop();
   auto curr_pg = curr_guard.As<BPlusTreePage>();
 
   while (!curr_pg->IsLeafPage()) {
@@ -208,6 +212,10 @@ auto BPLUSTREE_TYPE::OptimisticInsert(const KeyType &key, const ValueType &value
     else hi = mid;
   }
 
+  if (lo == 0 || lo == leaf_pg->GetSize()) {
+    return std::nullopt; // edge insertion — unsafe to trust a stale leaf identity, fall back
+  }
+
   for (int i = leaf_pg->GetSize(); i > lo; i--) {
     leaf_pg->SetKeyAt(i, leaf_pg->KeyAt(i - 1));
     leaf_pg->SetValueAt(i, leaf_pg->ValueAt(i - 1));
@@ -239,11 +247,11 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool {
   //UNIMPLEMENTED("TODO(P2): Add implementation.");
   // Declaration of context instance. Using the Context is not necessary but advised.
-  // auto optimistic_result = OptimisticInsert(key, value);
-  // if (optimistic_result.has_value()) 
-  // {
-  //   return optimistic_result.value();
-  // }
+  auto optimistic_result = OptimisticInsert(key, value);
+  if (optimistic_result.has_value()) 
+  {
+    return optimistic_result.value();
+  }
   Context ctx;
   WritePageGuard header_guard = bpm_->WritePage(header_page_id_); // get a write guard on header pg
   auto header_pg = header_guard.AsMut<BPlusTreeHeaderPage>(); // get a pointer to the guard as a headertype obj
@@ -295,6 +303,10 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     curr_guard = bpm_->WritePage(child_id);
     curr_pg = curr_guard.AsMut<BPlusTreePage>();
     
+    //  if (!curr_pg->IsLeafPage() && curr_pg->GetSize() < curr_pg->GetMaxSize() - 1) {
+    //     ctx.write_set_.clear(); // release all ancestor write latches
+    //     ctx.header_page_ = std::nullopt; // release header latch too
+    // }
   }
   //leaf page
   page_id_t curr_leaf_id = curr_guard.GetPageId();
@@ -457,13 +469,15 @@ auto BPLUSTREE_TYPE::OptimisticRemove(const KeyType &key) -> std::optional<bool>
   ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
   auto header_pg = header_guard.As<BPlusTreeHeaderPage>();
   page_id_t root_pg_id = header_pg->root_page_id_;
-  header_guard.Drop();
+  
 
   if (root_pg_id == INVALID_PAGE_ID) {
+    header_guard.Drop();
     return true; // empty tree
   }
 
   ReadPageGuard curr_guard = bpm_->ReadPage(root_pg_id);
+  header_guard.Drop();
   auto curr_pg = curr_guard.As<BPlusTreePage>();
 
   while (!curr_pg->IsLeafPage()) {
@@ -536,11 +550,11 @@ auto BPLUSTREE_TYPE::OptimisticRemove(const KeyType &key) -> std::optional<bool>
 FULL_INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   // Declaration of context instance.
-  // auto optimistic_result = OptimisticRemove(key);
-  // if (optimistic_result.has_value())
-  // {
-  //   return;
-  // }
+  auto optimistic_result = OptimisticRemove(key);
+  if (optimistic_result.has_value())
+  {
+    return;
+  }
   Context ctx;
   //UNIMPLEMENTED("TODO(P2): Add implementation.");
   WritePageGuard header_guard = bpm_->WritePage(header_page_id_); // get a write guard on header pg
@@ -583,6 +597,10 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     curr_guard = bpm_->WritePage(child_id);
     curr_pg = curr_guard.AsMut<BPlusTreePage>();
     
+    //  if (!curr_pg->IsLeafPage() && curr_pg->GetSize() > curr_pg->GetMinSize() ) {
+    //     ctx.write_set_.clear(); // release all ancestor write latches
+    //     ctx.header_page_ = std::nullopt; // release header latch too
+    // }
   }
   //leaf
   page_id_t curr_leaf_id = curr_guard.GetPageId();
@@ -991,13 +1009,15 @@ auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
   ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
   auto header_pg = header_guard.As<BPlusTreeHeaderPage>();
   auto header_root_id = header_pg->root_page_id_;
-  header_guard.Drop();
+  
   if(header_root_id == INVALID_PAGE_ID) // check if tree even exists
   {
+    header_guard.Drop();
     return INDEXITERATOR_TYPE();
   }
   
   ReadPageGuard curr_guard = bpm_->ReadPage(header_root_id);
+  header_guard.Drop();
   auto curr_page = curr_guard.As<BPlusTreePage>();
   while(!curr_page->IsLeafPage())
   {
