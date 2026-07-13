@@ -184,9 +184,15 @@ auto BPLUSTREE_TYPE::OptimisticInsert(const KeyType &key, const ValueType &value
   }
 
   page_id_t leaf_id = curr_guard.GetPageId();
+  int expected_size = curr_pg->GetSize();
   curr_guard.Drop();
   WritePageGuard leaf_guard = bpm_->WritePage(leaf_id);
   auto leaf_pg = leaf_guard.AsMut<LeafPage>();
+
+  if(leaf_pg->GetSize() != expected_size)
+  {
+    return std::nullopt;
+  }
 
   if (leaf_pg->GetSize() >= leaf_pg->GetMaxSize() - 1) {
     return std::nullopt; // leaf will split, need pessimistic
@@ -233,11 +239,11 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool {
   //UNIMPLEMENTED("TODO(P2): Add implementation.");
   // Declaration of context instance. Using the Context is not necessary but advised.
-  auto optimistic_result = OptimisticInsert(key, value);
-  if (optimistic_result.has_value()) 
-  {
-    return optimistic_result.value();
-  }
+  // auto optimistic_result = OptimisticInsert(key, value);
+  // if (optimistic_result.has_value()) 
+  // {
+  //   return optimistic_result.value();
+  // }
   Context ctx;
   WritePageGuard header_guard = bpm_->WritePage(header_page_id_); // get a write guard on header pg
   auto header_pg = header_guard.AsMut<BPlusTreeHeaderPage>(); // get a pointer to the guard as a headertype obj
@@ -477,9 +483,15 @@ auto BPLUSTREE_TYPE::OptimisticRemove(const KeyType &key) -> std::optional<bool>
   }
 
   page_id_t leaf_id = curr_guard.GetPageId();
+  int expected_size = curr_pg->GetSize();
   curr_guard.Drop();
   WritePageGuard leaf_guard = bpm_->WritePage(leaf_id);
   auto leaf_pg = leaf_guard.AsMut<LeafPage>();
+
+  if(leaf_pg->GetSize() != expected_size)
+  {
+    return std::nullopt;
+  }
 
   if (leaf_pg->GetSize() <= leaf_pg->GetMinSize()) {
     return std::nullopt; // will underflow, need pessimistic
@@ -524,11 +536,11 @@ auto BPLUSTREE_TYPE::OptimisticRemove(const KeyType &key) -> std::optional<bool>
 FULL_INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   // Declaration of context instance.
-  auto optimistic_result = OptimisticRemove(key);
-  if (optimistic_result.has_value())
-  {
-    return;
-  }
+  // auto optimistic_result = OptimisticRemove(key);
+  // if (optimistic_result.has_value())
+  // {
+  //   return;
+  // }
   Context ctx;
   //UNIMPLEMENTED("TODO(P2): Add implementation.");
   WritePageGuard header_guard = bpm_->WritePage(header_page_id_); // get a write guard on header pg
