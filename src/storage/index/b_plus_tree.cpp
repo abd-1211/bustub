@@ -207,7 +207,14 @@ auto BPLUSTREE_TYPE::OptimisticInsert(const KeyType &key, const ValueType &value
   while (lo < hi) {
     int mid = lo + (hi - lo) / 2;
     int cmp = comparator_(leaf_pg->KeyAt(mid), key);
-    if (cmp == 0) return false; // duplicate
+    if (cmp == 0) {
+      if (NumTombs > 0 && leaf_pg->IsIndexTombstoned(mid)) {
+        leaf_pg->SetValueAt(mid, value);
+        leaf_pg->RemoveTombstoneAt(mid);
+        return true;
+      }
+      return false; // duplicate
+    }
     if (cmp < 0) lo = mid + 1;
     else hi = mid;
   }
@@ -330,6 +337,11 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
       }
       else
       {
+        if (NumTombs > 0 && leaf_pg->IsIndexTombstoned(mid)) {
+          leaf_pg->SetValueAt(mid, value);
+          leaf_pg->RemoveTombstoneAt(mid);
+          return true;
+        }
         return false; // duplicate key inserted
       }
     
@@ -359,6 +371,22 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
       new_leaf_pg->SetValueAt(idx,leaf_pg->ValueAt(i));
       new_leaf_pg->SetKeyAt(idx,leaf_pg->KeyAt(i));
       idx++;
+    }
+    if (NumTombs > 0) {
+      auto old_tombs = leaf_pg->GetTombstones();  // resolves current tomb indices to actual keys, pre-move
+      leaf_pg->ClearTombstones();
+      for (auto &tkey : old_tombs) {
+        for (int i = 0; i < leaf_pg->GetSize(); i++) {  // GetSize() here is still the pre-split full size
+          if (comparator_(leaf_pg->KeyAt(i), tkey) == 0) {
+            if (i < split) {
+              if (!leaf_pg->IsTombstoneFull()) leaf_pg->InsertTombstone(i);
+            } else if (!new_leaf_pg->IsTombstoneFull()) {
+              new_leaf_pg->InsertTombstone(i - split);
+            }
+            break;
+          }
+        }
+      }
     }
     new_leaf_pg->SetSize(idx); // no of inserted k-v pairs is the size of the new page
     leaf_pg->SetSize(leaf_pg->GetSize()-idx); // subtract the no of inserted pairs to the new page to get the size of old page
@@ -462,6 +490,42 @@ void BPLUSTREE_TYPE::InsertIntoParent(Context &ctx, page_id_t old_id, const KeyT
 }
 
 
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::MergeIncomingTombstones(LeafPage *recipient, LeafPage *donor, int offset) {
+  auto donor_tombs = donor->GetTombstoneIndicesInOrder();
+  std::vector<int> incoming;
+  for (auto idx : donor_tombs) incoming.push_back(static_cast<int>(idx) + offset);
+  for (size_t i = 0; i < incoming.size(); i++) {
+    bool will_evict = recipient->IsTombstoneFull();
+    int oldest_pos = will_evict ? recipient->GetOldestTombstoneIndex() : -1;
+    AppendIncomingTombstone(recipient, incoming[i]);
+    if (will_evict) {
+      for (size_t j = i + 1; j < incoming.size(); j++) {
+        if (incoming[j] > oldest_pos) incoming[j]--;
+      }
+    }
+  }
+}
+
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::AppendIncomingTombstone(LeafPage *leaf, int index) {
+  // index is the physical slot (in `leaf`'s own array) that should become the newest tombstone.
+  if (leaf->IsTombstoneFull()) {
+    int oldest_pos = leaf->GetOldestTombstoneIndex();
+    leaf->PopOldestTombstone();
+    if (oldest_pos < index) {
+      index--;  // our target slot shifts left once the earlier slot is erased
+    }
+    for (int i = oldest_pos; i < leaf->GetSize() - 1; i++) {
+      leaf->SetKeyAt(i, leaf->KeyAt(i + 1));
+      leaf->SetValueAt(i, leaf->ValueAt(i + 1));
+    }
+    leaf->ChangeSizeBy(-1);
+    leaf->ShiftTombstonesAfterErase(oldest_pos);
+  }
+  leaf->InsertTombstone(index);
+}
 
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
@@ -506,9 +570,10 @@ auto BPLUSTREE_TYPE::OptimisticRemove(const KeyType &key) -> std::optional<bool>
   {
     return std::nullopt;
   }
-
-  if (leaf_pg->GetSize() <= leaf_pg->GetMinSize()) {
-    return std::nullopt; // will underflow, need pessimistic
+  bool will_evict = NumTombs > 0 && leaf_pg->IsTombstoneFull();
+  bool will_shrink = NumTombs == 0 || will_evict;
+  if (will_shrink && leaf_pg->GetSize() <= leaf_pg->GetMinSize()) {
+    return std::nullopt; // a physical shrink here would underflow, need pessimistic
   }
 
   int lo = 0, hi = leaf_pg->GetSize(), mid = 0;
@@ -516,6 +581,10 @@ auto BPLUSTREE_TYPE::OptimisticRemove(const KeyType &key) -> std::optional<bool>
     mid = lo + (hi - lo) / 2;
     int cmp = comparator_(leaf_pg->KeyAt(mid), key);
     if (cmp == 0) {
+      if (NumTombs > 0) {
+        AppendIncomingTombstone(leaf_pg, mid);
+        return true;
+      }
       for (int i = mid; i < leaf_pg->GetSize() - 1; i++) {
         leaf_pg->SetKeyAt(i, leaf_pg->KeyAt(i + 1));
         leaf_pg->SetValueAt(i, leaf_pg->ValueAt(i + 1));
@@ -628,12 +697,26 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       }
       else // key found
       {
-        for(int i = mid;i<leaf_pg->GetSize()-1;i++) // shift keys to the left
+        if (NumTombs > 0)
         {
-          leaf_pg->SetValueAt(i,leaf_pg->ValueAt(i+1));
-          leaf_pg->SetKeyAt(i,leaf_pg->KeyAt(i+1));
+          int size_before = leaf_pg->GetSize();
+          AppendIncomingTombstone(leaf_pg, mid);
+          if (leaf_pg->GetSize() == size_before)  // no physical eviction happened
+          {
+            ctx.header_page_ = std::nullopt;
+            return;
+          }
+          // an eviction physically shrank this leaf — fall through to underflow handling below
         }
-        leaf_pg->ChangeSizeBy(-1);
+        else
+        {
+          for(int i = mid;i<leaf_pg->GetSize()-1;i++) // shift keys to the left
+          {
+            leaf_pg->SetValueAt(i,leaf_pg->ValueAt(i+1));
+            leaf_pg->SetKeyAt(i,leaf_pg->KeyAt(i+1));
+          }
+          leaf_pg->ChangeSizeBy(-1);
+        }
         if(ctx.write_set_.empty())
         {
           if(leaf_pg->GetSize()==0)
@@ -673,11 +756,24 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
           if(left_size>left->GetMinSize())
           {
             //borrow
+            bool moved_was_tombstoned = NumTombs > 0 && left->IsIndexTombstoned(left_size - 1);
+            if (NumTombs > 0 && moved_was_tombstoned) {
+              left->RemoveTombstoneAt(left_size - 1);
+            }
+
             for(int i=leaf_pg->GetSize() ; i>0 ;i--) // make index 0 empty by right shifting
             {
               leaf_pg->SetKeyAt(i,leaf_pg->KeyAt(i-1));
               leaf_pg->SetValueAt(i,leaf_pg->ValueAt(i-1));
             }
+            if (NumTombs > 0) {
+              // every existing entry in leaf_pg just shifted right by 1 — shift its tombstones too
+              for (auto idx : leaf_pg->GetTombstoneIndicesInOrder()) {
+                leaf_pg->RemoveTombstoneAt(static_cast<int>(idx));
+                leaf_pg->InsertTombstone(static_cast<int>(idx) + 1);
+              }
+            }
+
             auto left_val=left->ValueAt(left_size-1);
             KeyType left_key = left->KeyAt(left_size-1);
             
@@ -686,12 +782,17 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
             leaf_pg->ChangeSizeBy(1);
             left->ChangeSizeBy(-1);
 
+            if (NumTombs > 0 && moved_was_tombstoned) {
+              AppendIncomingTombstone(leaf_pg, 0);  // recipient's own (just shifted) tombstones are older, evicted first
+            }
+
             parent->SetKeyAt(leaf_idx,leaf_pg->KeyAt(0));
             ctx.header_page_ = std::nullopt;
             return;
           }
           else {
             //merge
+            int orig_left_size = left->GetSize();
             std::vector<KeyType> keys;
             std::vector<ValueType> vals; //temp vectors to store 
             int count =0;
@@ -717,6 +818,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
               
               }
               left->SetSize(count);
+              if (NumTombs > 0) {
+                MergeIncomingTombstones(left, leaf_pg, orig_left_size);
+              }
               left->SetNextPageId(leaf_pg->GetNextPageId());
               leaf_pg->SetSize(0);
               for(int i = leaf_idx; i<parent->GetSize()-1; i++) // remove the leaf seperator at leaf_idx by left shifting
@@ -749,10 +853,16 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
           int right_size = right->GetSize();
           if(right_size>right->GetMinSize())
           {
+            bool moved_was_tombstoned = NumTombs > 0 && right->IsIndexTombstoned(0);
+            if (NumTombs > 0 && moved_was_tombstoned) {
+              right->RemoveTombstoneAt(0);
+            }
+
+            int dest_idx = leaf_pg->GetSize();
             auto right_val = right->ValueAt(0);
             auto right_key = right->KeyAt(0);
-            leaf_pg->SetValueAt(leaf_pg->GetSize(),right_val);
-            leaf_pg->SetKeyAt(leaf_pg->GetSize(),right_key);
+            leaf_pg->SetValueAt(dest_idx,right_val);
+            leaf_pg->SetKeyAt(dest_idx,right_key);
             leaf_pg->ChangeSizeBy(1);
             for(int i= 0 ;i<right->GetSize()-1;i++) // push back the entries to the left in right node to fill the 0 idx
             {
@@ -760,6 +870,12 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
               right->SetKeyAt(i,right->KeyAt(i+1));
             }
             right->ChangeSizeBy(-1);
+            if (NumTombs > 0) {
+              right->ShiftTombstonesAfterErase(0);
+            }
+            if (NumTombs > 0 && moved_was_tombstoned) {
+              AppendIncomingTombstone(leaf_pg, dest_idx);
+            }
             parent->SetKeyAt(leaf_idx+1,right->KeyAt(0));
             ctx.header_page_ = std::nullopt;
             return;
@@ -774,6 +890,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
               leaf_pg->SetKeyAt(leaf_size+i,right->KeyAt(i));
             }
             leaf_pg->ChangeSizeBy(right->GetSize());
+            if (NumTombs > 0) {
+              MergeIncomingTombstones(leaf_pg, right, leaf_size);
+            }
             leaf_pg->SetNextPageId(right->GetNextPageId());
             right->SetSize(0);
             

@@ -77,6 +77,61 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto ValueAt(int index) const -> ValueType; // to get the value of a key at an index
   void SetValueAt(int index, const ValueType &value); // to set the value of a key at a given index
   auto GetMinSize() const -> int { return GetMaxSize() / 2; }
+  auto IsTombstoneFull() const -> bool {
+    return NumTombs > 0 && num_tombstones_ >= static_cast<size_t>(LEAF_PAGE_TOMB_CNT);
+  }
+  auto GetNumTombstones() const -> size_t { return num_tombstones_; }
+
+  /** Mark key_array_[index] as logically deleted. Caller must check !IsTombstoneFull() first. */
+  void InsertTombstone(int index) { tombstones_[num_tombstones_++] = static_cast<size_t>(index); }
+  void ClearTombstones() { num_tombstones_ = 0; }
+  /** Remove the tombstone marking key_array_[index] as deleted, if present. */
+  void RemoveTombstoneAt(int index) {
+    for (size_t i = 0; i < num_tombstones_; i++) {
+      if (tombstones_[i] == static_cast<size_t>(index)) {
+        for (size_t j = i; j + 1 < num_tombstones_; j++) {
+          tombstones_[j] = tombstones_[j + 1];
+        }
+        num_tombstones_--;
+        return;
+      }
+    }
+  }
+  auto IsIndexTombstoned(int index) const -> bool {
+    for (size_t i = 0; i < num_tombstones_; i++) {
+      if (tombstones_[i] == static_cast<size_t>(index)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** @return the physical index of the oldest (FIFO-front) tombstone. Caller must ensure num_tombstones_ > 0. */
+  auto GetOldestTombstoneIndex() const -> int { return static_cast<int>(tombstones_[0]); }
+
+  /** Remove the oldest tombstone, preserving relative order of the rest. */
+  void PopOldestTombstone() {
+    for (size_t i = 0; i + 1 < num_tombstones_; i++) {
+      tombstones_[i] = tombstones_[i + 1];
+    }
+    num_tombstones_--;
+  }
+
+  /** Call after physically erasing key_array_[pos] (array already shifted left) to keep tombstone indices valid. */
+  void ShiftTombstonesAfterErase(int pos) {
+    for (size_t i = 0; i < num_tombstones_; i++) {
+      if (tombstones_[i] > static_cast<size_t>(pos)) {
+        tombstones_[i]--;
+      }
+    }
+  }
+
+  /** Tombstone indices in FIFO (oldest-first) order. */
+  auto GetTombstoneIndicesInOrder() const -> std::vector<size_t> {
+    return std::vector<size_t>(tombstones_, tombstones_ + num_tombstones_);
+  }
+
+
   /**
    * @brief for test only return a string representing all keys in
    * this leaf page formatted as "(tombkey1, tombkey2, ...|key1,key2,key3,...)"

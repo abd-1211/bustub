@@ -63,6 +63,7 @@ class IndexIterator {
 
  private:
   // add your own private member variables here
+  void SkipTombstones();
   std::shared_ptr<TracedBufferPoolManager> bpm_{nullptr};
   ReadPageGuard leaf_guard_;
   int curr_idx_{0};

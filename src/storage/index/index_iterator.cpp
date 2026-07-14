@@ -34,7 +34,9 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 INDEXITERATOR_TYPE::IndexIterator() = default;
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-INDEXITERATOR_TYPE::IndexIterator(std::shared_ptr<TracedBufferPoolManager> bpm,ReadPageGuard leaf_guard, int curr_idx): bpm_(std::move(bpm)), leaf_guard_(std::move(leaf_guard)), curr_idx_(curr_idx) {}
+INDEXITERATOR_TYPE::IndexIterator(std::shared_ptr<TracedBufferPoolManager> bpm,ReadPageGuard leaf_guard, int curr_idx): bpm_(std::move(bpm)), leaf_guard_(std::move(leaf_guard)), curr_idx_(curr_idx) {
+  SkipTombstones();
+}
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 INDEXITERATOR_TYPE::~IndexIterator() = default;  // NOLINT
@@ -57,27 +59,36 @@ auto INDEXITERATOR_TYPE::operator*() -> std::pair<const KeyType &, const ValueTy
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & { 
  //UNIMPLEMENTED("TODO(P2): Add implementation."); 
-  auto leaf = leaf_guard_.As<BPlusTreeLeafPage<KeyType,  ValueType,  KeyComparator,NumTombs>>();
+  
   curr_idx_++;
   
   //tombstone check 
-
-
-
-  if(curr_idx_ >= leaf->GetSize())
-  {
-    page_id_t next_id = leaf->GetNextPageId();
-    if(next_id == INVALID_PAGE_ID)
-    {
-      bpm_=nullptr;
-      leaf_guard_ = ReadPageGuard();
-    }
-    else {
-    leaf_guard_ = bpm_->ReadPage(next_id);
-    curr_idx_=0;
-    }
-  }
+  SkipTombstones();
+  
   return *this;
+}
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void INDEXITERATOR_TYPE::SkipTombstones() {
+  while (bpm_ != nullptr) {
+    auto leaf = leaf_guard_.As<BPlusTreeLeafPage<KeyType, ValueType, KeyComparator, NumTombs>>();
+    if (curr_idx_ >= leaf->GetSize()) {
+      page_id_t next_id = leaf->GetNextPageId();
+      if (next_id == INVALID_PAGE_ID) {
+        bpm_ = nullptr;
+        leaf_guard_ = ReadPageGuard();
+        return;
+      }
+      leaf_guard_ = bpm_->ReadPage(next_id);
+      curr_idx_ = 0;
+      continue;
+    }
+    if (NumTombs > 0 && leaf->IsIndexTombstoned(curr_idx_)) {
+      curr_idx_++;
+      continue;
+    }
+    return;
+  }
 }
 
 template class IndexIterator<GenericKey<4>, RID, GenericComparator<4>>;

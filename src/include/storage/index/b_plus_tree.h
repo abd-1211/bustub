@@ -124,6 +124,8 @@ class BPlusTree {
   std::shared_ptr<TracedBufferPoolManager> bpm_;
 
  private:
+ void AppendIncomingTombstone(LeafPage *leaf, int index);
+ void MergeIncomingTombstones(LeafPage *recipient, LeafPage *donor, int offset);
  auto OptimisticInsert(const KeyType &key, const ValueType &value) -> std::optional<bool>;
 auto OptimisticRemove(const KeyType &key) -> std::optional<bool>;
  void InsertIntoParent(Context &ctx, page_id_t old_id, const KeyType &key, page_id_t new_id);
