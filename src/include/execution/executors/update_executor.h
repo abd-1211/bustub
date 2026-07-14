@@ -15,6 +15,7 @@
 #include <memory>
 #include <vector>
 
+#include "catalog/catalog.h"
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/update_plan.h"
@@ -27,28 +28,33 @@ namespace bustub {
  * Updated values are always pulled from a child.
  */
 class UpdateExecutor : public AbstractExecutor {
-  friend class UpdatePlanNode;
-
  public:
   UpdateExecutor(ExecutorContext *exec_ctx, const UpdatePlanNode *plan,
                  std::unique_ptr<AbstractExecutor> &&child_executor);
 
   void Init() override;
 
-  auto Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<bustub::RID> *rid_batch, size_t batch_size)
-      -> bool override;
+  auto Next(std::vector<Tuple> *tuple_batch,
+            std::vector<RID> *rid_batch,
+            size_t batch_size) -> bool override;
 
   /** @return The output schema for the update */
-  auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); }
+  auto GetOutputSchema() const -> const Schema & override {
+    return plan_->OutputSchema();
+  }
 
  private:
-  /** The update plan node to be executed */
+  /** Update plan */
   const UpdatePlanNode *plan_;
 
-  /** Metadata identifying the table that should be updated */
+  /** Table metadata */
   const TableInfo *table_info_;
 
-  /** The child executor to obtain value from */
+  /** Child executor */
   std::unique_ptr<AbstractExecutor> child_executor_;
+
+  /** Ensures the result tuple is produced only once */
+  bool has_executed_{false};
 };
+
 }  // namespace bustub

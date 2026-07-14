@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/catalog.h"
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/delete_plan.h"
@@ -24,7 +25,7 @@
 namespace bustub {
 
 /**
- * DeletedExecutor executes a delete on a table.
+ * DeleteExecutor executes a delete on a table.
  * Deleted values are always pulled from a child.
  */
 class DeleteExecutor : public AbstractExecutor {
@@ -34,17 +35,27 @@ class DeleteExecutor : public AbstractExecutor {
 
   void Init() override;
 
-  auto Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<bustub::RID> *rid_batch, size_t batch_size)
-      -> bool override;
+  auto Next(std::vector<Tuple> *tuple_batch,
+            std::vector<RID> *rid_batch,
+            size_t batch_size) -> bool override;
 
   /** @return The output schema for the delete */
-  auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); };
+  auto GetOutputSchema() const -> const Schema & override {
+    return plan_->OutputSchema();
+  }
 
  private:
   /** The delete plan node to be executed */
   const DeletePlanNode *plan_;
 
-  /** The child executor from which RIDs for deleted tuples are pulled */
+  /** Metadata identifying the table to delete from */
+  const TableInfo *table_info_;
+
+  /** The child executor that produces tuples/RIDs to delete */
   std::unique_ptr<AbstractExecutor> child_executor_;
+
+  /** Ensures the delete count is returned only once */
+  bool has_executed_{false};
 };
+
 }  // namespace bustub
