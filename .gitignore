@@ -250,3 +250,4 @@ docs/dev
 
 .vscode/
 build/
+test*
