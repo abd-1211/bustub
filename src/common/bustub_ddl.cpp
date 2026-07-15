@@ -17,6 +17,7 @@
 #include <shared_mutex>
 #include <string>
 #include <tuple>
+#include <algorithm>
 
 #include "binder/binder.h"
 #include "binder/bound_expression.h"
@@ -54,6 +55,7 @@
 #include "storage/index/generic_key.h"
 #include "type/value_factory.h"
 
+
 namespace bustub {
 
 void BusTubInstance::HandleCreateStatement(Transaction *txn, const CreateStatement &stmt, ResultWriter &writer) {
@@ -76,7 +78,7 @@ void BusTubInstance::HandleCreateStatement(Transaction *txn, const CreateStateme
     }
 
     // We compute the size (in bytes) of the index key
-    uint32_t key_size = col_ids.size() * 4;
+    uint32_t key_size = std::max<uint32_t>(col_ids.size() * 4, 8);
 
     // We create an index of sufficient size depending on the key size.
     //! NOTE: Currently, we support key sizes of at most 64 bytes.
@@ -152,7 +154,8 @@ void BusTubInstance::HandleIndexStatement(Transaction *txn, const IndexStatement
   }
 
   // We compute the size (in bytes) of the index key
-  uint32_t key_size = col_ids.size() * 4;
+  uint32_t key_size = std::max<uint32_t>(col_ids.size() * 4, 8);
+
 
   // We create an index of sufficient size depending on the key size.
   //! NOTE: Currently, we support key sizes of at most 64 bytes.

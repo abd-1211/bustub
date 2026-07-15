@@ -45,17 +45,16 @@ BPLUSTREE_TYPE::BPlusTree(std::string name, page_id_t header_page_id, BufferPool
  * @return Returns true if this B+ tree has no keys and values.
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::IsEmpty() const -> bool { 
-  //UNIMPLEMENTED("TODO(P2): Add implementation."); 
-  ReadPageGuard guard = bpm_->ReadPage(header_page_id_); // acquire a read lock on the current B+ tree header.
-  auto header_page = guard.As<BPlusTreeHeaderPage>(); // convert the raw bytes from the guard to a read only bplustreeheader type object
-  auto root_id = header_page->root_page_id_;// get the id of the root page to check wether its valid or not (exists or not)
-  if(root_id == INVALID_PAGE_ID )
-  {
+auto BPLUSTREE_TYPE::IsEmpty() const -> bool {
+  // UNIMPLEMENTED("TODO(P2): Add implementation.");
+  ReadPageGuard guard = bpm_->ReadPage(header_page_id_);  // acquire a read lock on the current B+ tree header.
+  auto header_page = guard.As<BPlusTreeHeaderPage>();     // convert the raw bytes from the guard to a read only
+                                                          // bplustreeheader type object
+  auto root_id =
+      header_page->root_page_id_;  // get the id of the root page to check wether its valid or not (exists or not)
+  if (root_id == INVALID_PAGE_ID) {
     return true;
-  }
-  else
-  {
+  } else {
     return false;
   }
 }
@@ -74,97 +73,77 @@ auto BPLUSTREE_TYPE::IsEmpty() const -> bool {
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result) -> bool {
-  //UNIMPLEMENTED("TODO(P2): Add implementation.");
-  // Declaration of context instance. Using the Context is not necessary but advised.
+  // UNIMPLEMENTED("TODO(P2): Add implementation.");
+  //  Declaration of context instance. Using the Context is not necessary but advised.
   Context ctx;
   ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
   auto header_pg = header_guard.As<BPlusTreeHeaderPage>();
   auto header_root_id = header_pg->root_page_id_;
-  
-  if(header_root_id == INVALID_PAGE_ID) // check if tree even exists
+
+  if (header_root_id == INVALID_PAGE_ID)  // check if tree even exists
   {
     header_guard.Drop();
     return false;
   }
-  
+
   ReadPageGuard curr_guard = bpm_->ReadPage(header_root_id);
   auto curr_page = curr_guard.As<BPlusTreePage>();
   header_guard.Drop();
-  while(!curr_page->IsLeafPage())
-  {
+  while (!curr_page->IsLeafPage()) {
     auto internal = curr_guard.As<InternalPage>();
-   
-      int hi = curr_page->GetSize(),lo = 1;
-      while(lo<hi)
+
+    int hi = curr_page->GetSize(), lo = 1;
+    while (lo < hi) {
+      int mid = lo + (hi - lo) / 2;
+      auto comp = comparator_(internal->KeyAt(mid), key);
+      if (comp > 0)  // if key is smaller than the key at current mid
       {
-        
-        int mid = lo + (hi-lo)/2;
-        auto comp = comparator_(internal->KeyAt(mid),key);
-        if(comp > 0) // if key is smaller than the key at current mid
-        {
-          hi = mid;
-        }
-        else  // if key is smaller than or equal to the key at current mid
-        {
-          lo = mid+1;
-          
-        }
-        
+        hi = mid;
+      } else  // if key is smaller than or equal to the key at current mid
+      {
+        lo = mid + 1;
       }
-      page_id_t child_id = internal->ValueAt(lo -1);
-      curr_guard = bpm_->ReadPage(child_id);
-      curr_page = curr_guard.As<BPlusTreePage>();
-      
     }
-      auto leaf_pg = curr_guard.As<LeafPage>();
-      int hi = curr_page->GetSize();
-      int lo = 0;
-      while(lo<hi)
-      {
-        int mid = lo + (hi-lo)/2; 
-        auto comp = comparator_(leaf_pg->KeyAt(mid),key);
-        if(comp > 0) // if key is smaller than the key at current mid
-        {
-          hi = mid;
-        }
-        else if (comp<0) // if key is smaller than or equal to the key at current mid
-        {
-          lo = mid+1;
-          
-        }
-        else
-        {
-          auto tombstones = leaf_pg->GetTombstones();
-          for(auto &tombs : tombstones)
-          {
-            if(comparator_(tombs,key) == 0)
-            {
-              return false; // the key has been logically deleted
-            }
-          }
-          result->push_back(leaf_pg->ValueAt(mid));
-          return true;
+    page_id_t child_id = internal->ValueAt(lo - 1);
+    curr_guard = bpm_->ReadPage(child_id);
+    curr_page = curr_guard.As<BPlusTreePage>();
+  }
+  auto leaf_pg = curr_guard.As<LeafPage>();
+  int hi = curr_page->GetSize();
+  int lo = 0;
+  while (lo < hi) {
+    int mid = lo + (hi - lo) / 2;
+    auto comp = comparator_(leaf_pg->KeyAt(mid), key);
+    if (comp > 0)  // if key is smaller than the key at current mid
+    {
+      hi = mid;
+    } else if (comp < 0)  // if key is smaller than or equal to the key at current mid
+    {
+      lo = mid + 1;
+
+    } else {
+      auto tombstones = leaf_pg->GetTombstones();
+      for (auto &tombs : tombstones) {
+        if (comparator_(tombs, key) == 0) {
+          return false;  // the key has been logically deleted
         }
       }
-      return false;
-    
-  
-  
+      result->push_back(leaf_pg->ValueAt(mid));
+      return true;
+    }
+  }
+  return false;
 }
-
-
-
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::OptimisticInsert(const KeyType &key, const ValueType &value) -> std::optional<bool> {
   ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
   auto header_pg = header_guard.As<BPlusTreeHeaderPage>();
   page_id_t root_pg_id = header_pg->root_page_id_;
-  
 
   if (root_pg_id == INVALID_PAGE_ID) {
     header_guard.Drop();
-    return std::nullopt; // empty tree needs pessimistic
+    return std::nullopt;  // empty tree needs pessimistic
   }
 
   ReadPageGuard curr_guard = bpm_->ReadPage(root_pg_id);
@@ -193,15 +172,13 @@ auto BPLUSTREE_TYPE::OptimisticInsert(const KeyType &key, const ValueType &value
   WritePageGuard leaf_guard = bpm_->WritePage(leaf_id);
   auto leaf_pg = leaf_guard.AsMut<LeafPage>();
 
-  if(leaf_pg->GetSize() != expected_size)
-  {
+  if (leaf_pg->GetSize() != expected_size) {
     return std::nullopt;
   }
 
   if (leaf_pg->GetSize() >= leaf_pg->GetMaxSize() - 1) {
-    return std::nullopt; // leaf will split, need pessimistic
+    return std::nullopt;  // leaf will split, need pessimistic
   }
- 
 
   int lo = 0, hi = leaf_pg->GetSize();
   while (lo < hi) {
@@ -213,14 +190,16 @@ auto BPLUSTREE_TYPE::OptimisticInsert(const KeyType &key, const ValueType &value
         leaf_pg->RemoveTombstoneAt(mid);
         return true;
       }
-      return false; // duplicate
+      return false;  // duplicate
     }
-    if (cmp < 0) lo = mid + 1;
-    else hi = mid;
+    if (cmp < 0)
+      lo = mid + 1;
+    else
+      hi = mid;
   }
 
   if (lo == 0 || lo == leaf_pg->GetSize()) {
-    return std::nullopt; // edge insertion — unsafe to trust a stale leaf identity, fall back
+    return std::nullopt;  // edge insertion — unsafe to trust a stale leaf identity, fall back
   }
 
   for (int i = leaf_pg->GetSize(); i > lo; i--) {
@@ -232,9 +211,6 @@ auto BPLUSTREE_TYPE::OptimisticInsert(const KeyType &key, const ValueType &value
   leaf_pg->ChangeSizeBy(1);
   return true;
 }
-
-
-
 
 /*****************************************************************************
  * INSERTION
@@ -252,124 +228,111 @@ auto BPLUSTREE_TYPE::OptimisticInsert(const KeyType &key, const ValueType &value
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool {
-  //UNIMPLEMENTED("TODO(P2): Add implementation.");
-  // Declaration of context instance. Using the Context is not necessary but advised.
+  // UNIMPLEMENTED("TODO(P2): Add implementation.");
+  //  Declaration of context instance. Using the Context is not necessary but advised.
   auto optimistic_result = OptimisticInsert(key, value);
-  if (optimistic_result.has_value()) 
-  {
+  if (optimistic_result.has_value()) {
     return optimistic_result.value();
   }
   Context ctx;
-  WritePageGuard header_guard = bpm_->WritePage(header_page_id_); // get a write guard on header pg
-  auto header_pg = header_guard.AsMut<BPlusTreeHeaderPage>(); // get a pointer to the guard as a headertype obj
-  auto root_pg_id = header_pg->root_page_id_; // get roots page id from the header
-  ctx.header_page_=std::move(header_guard); // push into ctx headerpage to propogate back if needed
+  WritePageGuard header_guard = bpm_->WritePage(header_page_id_);  // get a write guard on header pg
+  auto header_pg = header_guard.AsMut<BPlusTreeHeaderPage>();      // get a pointer to the guard as a headertype obj
+  auto root_pg_id = header_pg->root_page_id_;                      // get roots page id from the header
+  ctx.header_page_ = std::move(header_guard);  // push into ctx headerpage to propogate back if needed
 
-  if(root_pg_id == INVALID_PAGE_ID) // tree doesnt exist
+  if (root_pg_id == INVALID_PAGE_ID)  // tree doesnt exist
   {
-    auto leaf_pg_id = bpm_->NewPage(); // since tree doesnt exist create root which would be the leaf
-    WritePageGuard leaf_guard = bpm_->WritePage(leaf_pg_id); // take a writeguard on that leaf
-    auto leaf_pg = leaf_guard.AsMut<LeafPage>(); // get a mutable pointer to it as a leafpage obj
-    leaf_pg->Init(leaf_max_size_); // set max size
-    leaf_pg->SetValueAt(0,value); // since its leaf idx 0 is valid so insert the value
-    leaf_pg->SetKeyAt(0,key);     // and key at first idx(0)
-    leaf_pg->ChangeSizeBy(1); // increment current size
-    header_pg->root_page_id_ = leaf_pg_id; // set the node u made as the root inside the headerpg.
-    ctx.header_page_ = std::nullopt; // empty the context header since no longer needed
+    auto leaf_pg_id = bpm_->NewPage();  // since tree doesnt exist create root which would be the leaf
+    WritePageGuard leaf_guard = bpm_->WritePage(leaf_pg_id);  // take a writeguard on that leaf
+    auto leaf_pg = leaf_guard.AsMut<LeafPage>();              // get a mutable pointer to it as a leafpage obj
+    leaf_pg->Init(leaf_max_size_);                            // set max size
+    leaf_pg->SetValueAt(0, value);                            // since its leaf idx 0 is valid so insert the value
+    leaf_pg->SetKeyAt(0, key);                                // and key at first idx(0)
+    leaf_pg->ChangeSizeBy(1);                                 // increment current size
+    header_pg->root_page_id_ = leaf_pg_id;                    // set the node u made as the root inside the headerpg.
+    ctx.header_page_ = std::nullopt;                          // empty the context header since no longer needed
     return true;
   }
-  //tree exists
+  // tree exists
   WritePageGuard curr_guard = bpm_->WritePage(root_pg_id);
   auto curr_pg = curr_guard.AsMut<BPlusTreePage>();
-  
-  while(!curr_pg->IsLeafPage()) // internal page
+
+  while (!curr_pg->IsLeafPage())  // internal page
   {
-    
     auto internal = curr_guard.AsMut<InternalPage>();
-    int lo = 1; 
+    int lo = 1;
     int hi = curr_pg->GetSize();
-    
-    while(lo<hi)
-    {
-    int mid = lo + (hi - lo)/2;
-    int cmp = comparator_(internal->KeyAt(mid),key);
-    if(cmp > 0) // if key is smaller than the key at current mid
+
+    while (lo < hi) {
+      int mid = lo + (hi - lo) / 2;
+      int cmp = comparator_(internal->KeyAt(mid), key);
+      if (cmp > 0)  // if key is smaller than the key at current mid
       {
         hi = mid;
-      }
-    else  // if key is smaller than or equal to the key at current mid
+      } else  // if key is smaller than or equal to the key at current mid
       {
-        lo = mid+1;
-        
+        lo = mid + 1;
       }
-       
-    } 
-    
-    page_id_t child_id = internal->ValueAt(lo-1);
+    }
+
+    page_id_t child_id = internal->ValueAt(lo - 1);
     ctx.write_set_.push_back(std::move(curr_guard));
     curr_guard = bpm_->WritePage(child_id);
     curr_pg = curr_guard.AsMut<BPlusTreePage>();
-    
+
     //  if (!curr_pg->IsLeafPage() && curr_pg->GetSize() < curr_pg->GetMaxSize() - 1) {
     //     ctx.write_set_.clear(); // release all ancestor write latches
     //     ctx.header_page_ = std::nullopt; // release header latch too
     // }
   }
-  //leaf page
+  // leaf page
   page_id_t curr_leaf_id = curr_guard.GetPageId();
   auto leaf_pg = curr_guard.AsMut<LeafPage>();
-  int hi=leaf_pg->GetSize();
+  int hi = leaf_pg->GetSize();
   int lo = 0;
-  
+
   int mid = 0;
-  while(lo<hi)
-  {
-    mid = lo + (hi-lo)/2;
-    int cmp = comparator_(leaf_pg->KeyAt(mid),key);
-    
-      if(cmp>0)
-      {
-        hi = mid;
+  while (lo < hi) {
+    mid = lo + (hi - lo) / 2;
+    int cmp = comparator_(leaf_pg->KeyAt(mid), key);
+
+    if (cmp > 0) {
+      hi = mid;
+    } else if (cmp < 0) {
+      lo = mid + 1;
+    } else {
+      if (NumTombs > 0 && leaf_pg->IsIndexTombstoned(mid)) {
+        leaf_pg->SetValueAt(mid, value);
+        leaf_pg->RemoveTombstoneAt(mid);
+        return true;
       }
-      else if (cmp <0)
-      {
-        lo = mid+1;
-      }
-      else
-      {
-        if (NumTombs > 0 && leaf_pg->IsIndexTombstoned(mid)) {
-          leaf_pg->SetValueAt(mid, value);
-          leaf_pg->RemoveTombstoneAt(mid);
-          return true;
-        }
-        return false; // duplicate key inserted
-      }
-    
+      return false;  // duplicate key inserted
+    }
   }
-  for(int i=leaf_pg->GetSize();i>lo;i--) // shift entries to the right to make space to insert the new k-v pairs
+  for (int i = leaf_pg->GetSize(); i > lo; i--)  // shift entries to the right to make space to insert the new k-v pairs
   {
-    leaf_pg->SetKeyAt(i,leaf_pg->KeyAt(i-1));
-    leaf_pg->SetValueAt(i,leaf_pg->ValueAt(i-1));
+    leaf_pg->SetKeyAt(i, leaf_pg->KeyAt(i - 1));
+    leaf_pg->SetValueAt(i, leaf_pg->ValueAt(i - 1));
   }
 
-  leaf_pg->SetValueAt(lo,value);
-  leaf_pg->SetKeyAt(lo,key);
+  leaf_pg->SetValueAt(lo, value);
+  leaf_pg->SetKeyAt(lo, key);
   leaf_pg->ChangeSizeBy(1);
-  if(leaf_pg->GetSize()>=leaf_pg->GetMaxSize()) // leaf has expanded beyond max allowable capacity so we must split the node
+  if (leaf_pg->GetSize() >=
+      leaf_pg->GetMaxSize())  // leaf has expanded beyond max allowable capacity so we must split the node
   {
-    
-    page_id_t new_leaf_id = bpm_->NewPage(); // create a new page for which to split right entries of previous page into
+    page_id_t new_leaf_id =
+        bpm_->NewPage();  // create a new page for which to split right entries of previous page into
     WritePageGuard new_leaf_guard = bpm_->WritePage(new_leaf_id);
     auto new_leaf_pg = new_leaf_guard.AsMut<LeafPage>();
     new_leaf_pg->Init(leaf_max_size_);
-    int split = leaf_pg->GetSize()/2;
+    int split = leaf_pg->GetSize() / 2;
     int idx = 0;
-    
-    for(int i=split;i<leaf_pg->GetSize();i++) // set right values of original leaf page to the new leaf page
+
+    for (int i = split; i < leaf_pg->GetSize(); i++)  // set right values of original leaf page to the new leaf page
     {
-      
-      new_leaf_pg->SetValueAt(idx,leaf_pg->ValueAt(i));
-      new_leaf_pg->SetKeyAt(idx,leaf_pg->KeyAt(i));
+      new_leaf_pg->SetValueAt(idx, leaf_pg->ValueAt(i));
+      new_leaf_pg->SetKeyAt(idx, leaf_pg->KeyAt(i));
       idx++;
     }
     if (NumTombs > 0) {
@@ -388,11 +351,14 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
         }
       }
     }
-    new_leaf_pg->SetSize(idx); // no of inserted k-v pairs is the size of the new page
-    leaf_pg->SetSize(leaf_pg->GetSize()-idx); // subtract the no of inserted pairs to the new page to get the size of old page
-    KeyType up_key = new_leaf_pg->KeyAt(0); // the key on which the nodes were split (the first key of right node in leaves)
-    new_leaf_pg->SetNextPageId(leaf_pg->GetNextPageId()); // connect the new node to the one pointed to by prev
-    leaf_pg->SetNextPageId(new_leaf_id); // connect the prev node to the new node. struct now is old->new->olds prev next
+    new_leaf_pg->SetSize(idx);  // no of inserted k-v pairs is the size of the new page
+    leaf_pg->SetSize(leaf_pg->GetSize() -
+                     idx);  // subtract the no of inserted pairs to the new page to get the size of old page
+    KeyType up_key =
+        new_leaf_pg->KeyAt(0);  // the key on which the nodes were split (the first key of right node in leaves)
+    new_leaf_pg->SetNextPageId(leaf_pg->GetNextPageId());  // connect the new node to the one pointed to by prev
+    leaf_pg->SetNextPageId(
+        new_leaf_id);  // connect the prev node to the new node. struct now is old->new->olds prev next
 
     InsertIntoParent(ctx, curr_leaf_id, up_key, new_leaf_id);
   }
@@ -401,143 +367,161 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
 }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-void BPLUSTREE_TYPE::InsertIntoParent(Context &ctx, page_id_t old_id, const KeyType &key, page_id_t new_id)
-{
-  if(ctx.write_set_.empty()) // if current leaf was the root , make a new root
+void BPLUSTREE_TYPE::InsertIntoParent(Context &ctx, page_id_t old_id, const KeyType &key, page_id_t new_id) {
+  if (ctx.write_set_.empty())  // if current leaf was the root , make a new root
   {
     page_id_t new_root_id = bpm_->NewPage();
     WritePageGuard new_root_guard = bpm_->WritePage(new_root_id);
     auto new_root = new_root_guard.AsMut<InternalPage>();
     new_root->Init(internal_max_size_);
-    new_root->SetValueAt(0,old_id); // first index contains left node
-    new_root->SetValueAt(1,new_id); // second contains new right node
-    new_root->SetKeyAt(1,key);
+    new_root->SetValueAt(0, old_id);  // first index contains left node
+    new_root->SetValueAt(1, new_id);  // second contains new right node
+    new_root->SetKeyAt(1, key);
     new_root->SetSize(2);
     auto header = ctx.header_page_->AsMut<BPlusTreeHeaderPage>();
-    header->root_page_id_ = new_root_id; // make the header point to the new root
-    ctx.header_page_ = std::nullopt; // release header 
-  }
-  else { // if current leaf was not a root
+    header->root_page_id_ = new_root_id;  // make the header point to the new root
+    ctx.header_page_ = std::nullopt;      // release header
+  } else {                                // if current leaf was not a root
     WritePageGuard parent_guard = std::move(ctx.write_set_.back());
     ctx.write_set_.pop_back();
-    
+
     auto parent = parent_guard.AsMut<InternalPage>();
-    int old_pg_idx = parent->ValueIndex(old_id); // find location of old page in the node
+    int old_pg_idx = parent->ValueIndex(old_id);  // find location of old page in the node
     int insert_pos = old_pg_idx + 1;
 
-    if(parent->GetSize() < parent->GetMaxSize()) // if node is not full, shift and insert directly
+    if (parent->GetSize() < parent->GetMaxSize())  // if node is not full, shift and insert directly
     {
-      for(int i=parent->GetSize(); i>insert_pos; i--) // shift existing entries to right to make space for 
+      for (int i = parent->GetSize(); i > insert_pos; i--)  // shift existing entries to right to make space for
       {
-        parent->SetKeyAt(i,parent->KeyAt(i-1));
-        parent->SetValueAt(i,parent->ValueAt(i-1));
+        parent->SetKeyAt(i, parent->KeyAt(i - 1));
+        parent->SetValueAt(i, parent->ValueAt(i - 1));
       }
-      parent->SetKeyAt(insert_pos,key); // place the seperator key at the new location we freed
-      parent->SetValueAt(insert_pos,new_id); // this is where the nodes split into two, so the new node begins
+      parent->SetKeyAt(insert_pos, key);       // place the seperator key at the new location we freed
+      parent->SetValueAt(insert_pos, new_id);  // this is where the nodes split into two, so the new node begins
       parent->ChangeSizeBy(1);
       ctx.header_page_ = std::nullopt;
-      
-    }
-    else// split the parent
+
+    } else  // split the parent
     {
-      std::vector<KeyType> keys; // make temp vectors to store contents of the parent
+      std::vector<KeyType> keys;  // make temp vectors to store contents of the parent
       std::vector<page_id_t> vals;
-      
+
       int parent_size = parent->GetSize();
-      for(int i=0; i<parent_size; i++) // fill the temp vectors
+      for (int i = 0; i < parent_size; i++)  // fill the temp vectors
       {
-        keys.push_back(parent->KeyAt(i)); 
+        keys.push_back(parent->KeyAt(i));
         vals.push_back(parent->ValueAt(i));
-       
       }
-      keys.insert(keys.begin() + insert_pos , key); // append the keys and vals at the insert position
-      vals.insert(vals.begin() + insert_pos, new_id ); //
+      keys.insert(keys.begin() + insert_pos, key);     // append the keys and vals at the insert position
+      vals.insert(vals.begin() + insert_pos, new_id);  //
 
-      int count = keys.size(); // get the no of k-vs that were present in the parent
-      int mid = count/2; // calculate mid index of the no of keys
+      int count = keys.size();  // get the no of k-vs that were present in the parent
+      int mid = count / 2;      // calculate mid index of the no of keys
 
-      for(int i=0; i<mid ; i++)
-      {
-        parent->SetValueAt(i,vals[i]); // update the added entry for the parent node
-        parent->SetKeyAt(i,keys[i]);
+      for (int i = 0; i < mid; i++) {
+        parent->SetValueAt(i, vals[i]);  // update the added entry for the parent node
+        parent->SetKeyAt(i, keys[i]);
       }
 
-      parent->SetSize(mid); // remove the entries that we will move to the new node. now entries are [0,mid)
-      
-      page_id_t new_node_id = bpm_->NewPage(); // now create the new node that we will split into
-      WritePageGuard new_node_guard = bpm_->WritePage(new_node_id); //
-      auto new_node = new_node_guard.AsMut<InternalPage>(); //
-      new_node->Init(internal_max_size_); //
-      new_node->SetValueAt(0,vals[mid]); // set value of 0 idx of split node to the mid val which would be there in the actual parent node
-      int idx = 0;                                    // also idx 0 does not have a key in internal nodes
-      
-      for(int i=mid+1;i<count;i++) // copy the values from (mid,count)
+      parent->SetSize(mid);  // remove the entries that we will move to the new node. now entries are [0,mid)
+
+      page_id_t new_node_id = bpm_->NewPage();                       // now create the new node that we will split into
+      WritePageGuard new_node_guard = bpm_->WritePage(new_node_id);  //
+      auto new_node = new_node_guard.AsMut<InternalPage>();          //
+      new_node->Init(internal_max_size_);                            //
+      new_node->SetValueAt(
+          0,
+          vals[mid]);  // set value of 0 idx of split node to the mid val which would be there in the actual parent node
+      int idx = 0;     // also idx 0 does not have a key in internal nodes
+
+      for (int i = mid + 1; i < count; i++)  // copy the values from (mid,count)
       {
-        new_node->SetKeyAt(idx+1,keys[i]);
-        new_node->SetValueAt(idx+1,vals[i]);
+        new_node->SetKeyAt(idx + 1, keys[i]);
+        new_node->SetValueAt(idx + 1, vals[i]);
         idx++;
       }
-      new_node->SetSize(idx+1); // all the indexes plus the 0 idx which does not have a key 
+      new_node->SetSize(idx + 1);  // all the indexes plus the 0 idx which does not have a key
 
-      KeyType up_key = keys[mid]; // the split key which will be present in parent only incase of internal nodes
+      KeyType up_key = keys[mid];  // the split key which will be present in parent only incase of internal nodes
 
-      page_id_t parent_id = parent_guard.GetPageId(); 
+      page_id_t parent_id = parent_guard.GetPageId();
 
       InsertIntoParent(ctx, parent_id, up_key, new_node_id);
     }
-    
   }
 }
-
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::MergeIncomingTombstones(LeafPage *recipient, LeafPage *donor, int offset) {
   auto donor_tombs = donor->GetTombstoneIndicesInOrder();
   std::vector<int> incoming;
-  for (auto idx : donor_tombs) incoming.push_back(static_cast<int>(idx) + offset);
+  for (auto idx : donor_tombs) {
+    int pos = static_cast<int>(idx) + offset;
+    if (pos >= 0 && pos < recipient->GetSize()) {
+      incoming.push_back(pos);
+    }
+  }
   for (size_t i = 0; i < incoming.size(); i++) {
-    bool will_evict = recipient->IsTombstoneFull();
-    int oldest_pos = will_evict ? recipient->GetOldestTombstoneIndex() : -1;
+    if (incoming[i] < 0 || incoming[i] >= recipient->GetSize()) continue;
+    int size_before = recipient->GetSize();
+    int oldest_pos = recipient->IsTombstoneFull() ? recipient->GetOldestTombstoneIndex() : -1;
     AppendIncomingTombstone(recipient, incoming[i]);
-    if (will_evict) {
+    bool evicted = (recipient->GetSize() < size_before);
+    if (evicted && oldest_pos >= 0) {
       for (size_t j = i + 1; j < incoming.size(); j++) {
-        if (incoming[j] > oldest_pos) incoming[j]--;
+        if (incoming[j] == oldest_pos) {
+          incoming[j] = -1;  // this entry was physically deleted
+        } else if (incoming[j] > oldest_pos) {
+          incoming[j]--;
+        }
       }
     }
   }
 }
 
-
 FULL_INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::AppendIncomingTombstone(LeafPage *leaf, int index) {
-  // index is the physical slot (in `leaf`'s own array) that should become the newest tombstone.
+  if (index < 0 || index >= leaf->GetSize()) return;
+
   if (leaf->IsTombstoneFull()) {
     int oldest_pos = leaf->GetOldestTombstoneIndex();
-    leaf->PopOldestTombstone();
-    if (oldest_pos < index) {
-      index--;  // our target slot shifts left once the earlier slot is erased
+    if (oldest_pos < 0 || oldest_pos >= leaf->GetSize()) {
+      leaf->PopOldestTombstone();
+      if (!leaf->IsIndexTombstoned(index)) leaf->InsertTombstone(index);
+      return;
     }
+    leaf->PopOldestTombstone();
+    if (oldest_pos == index) {
+      // entry to tombstone IS the one being evicted — just physically delete it
+      for (int i = oldest_pos; i < leaf->GetSize() - 1; i++) {
+        leaf->SetKeyAt(i, leaf->KeyAt(i + 1));
+        leaf->SetValueAt(i, leaf->ValueAt(i + 1));
+      }
+      leaf->ChangeSizeBy(-1);
+      leaf->ShiftTombstonesAfterErase(oldest_pos);
+      return;
+    }
+    if (oldest_pos < index) index--;
     for (int i = oldest_pos; i < leaf->GetSize() - 1; i++) {
       leaf->SetKeyAt(i, leaf->KeyAt(i + 1));
       leaf->SetValueAt(i, leaf->ValueAt(i + 1));
     }
     leaf->ChangeSizeBy(-1);
     leaf->ShiftTombstonesAfterErase(oldest_pos);
+    if (index < 0 || index >= leaf->GetSize()) return;
   }
-  leaf->InsertTombstone(index);
+  if (!leaf->IsIndexTombstoned(index)) leaf->InsertTombstone(index);
 }
-
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::OptimisticRemove(const KeyType &key) -> std::optional<bool> {
   ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
   auto header_pg = header_guard.As<BPlusTreeHeaderPage>();
   page_id_t root_pg_id = header_pg->root_page_id_;
-  
 
   if (root_pg_id == INVALID_PAGE_ID) {
     header_guard.Drop();
-    return true; // empty tree
+    return true;  // empty tree
   }
 
   ReadPageGuard curr_guard = bpm_->ReadPage(root_pg_id);
@@ -566,14 +550,13 @@ auto BPLUSTREE_TYPE::OptimisticRemove(const KeyType &key) -> std::optional<bool>
   WritePageGuard leaf_guard = bpm_->WritePage(leaf_id);
   auto leaf_pg = leaf_guard.AsMut<LeafPage>();
 
-  if(leaf_pg->GetSize() != expected_size)
-  {
+  if (leaf_pg->GetSize() != expected_size) {
     return std::nullopt;
   }
   bool will_evict = NumTombs > 0 && leaf_pg->IsTombstoneFull();
   bool will_shrink = NumTombs == 0 || will_evict;
   if (will_shrink && leaf_pg->GetSize() <= leaf_pg->GetMinSize()) {
-    return std::nullopt; // a physical shrink here would underflow, need pessimistic
+    return std::nullopt;  // a physical shrink here would underflow, need pessimistic
   }
 
   int lo = 0, hi = leaf_pg->GetSize(), mid = 0;
@@ -592,16 +575,13 @@ auto BPLUSTREE_TYPE::OptimisticRemove(const KeyType &key) -> std::optional<bool>
       leaf_pg->ChangeSizeBy(-1);
       return true;
     }
-    if (cmp < 0) lo = mid + 1;
-    else hi = mid;
+    if (cmp < 0)
+      lo = mid + 1;
+    else
+      hi = mid;
   }
-  return true; // key not found
+  return true;  // key not found
 }
-
-
-
-
-
 
 /*****************************************************************************
  * REMOVE
@@ -615,325 +595,241 @@ auto BPLUSTREE_TYPE::OptimisticRemove(const KeyType &key) -> std::optional<bool>
  *
  * @param key input key
  */
- 
+
 FULL_INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   // Declaration of context instance.
   auto optimistic_result = OptimisticRemove(key);
-  if (optimistic_result.has_value())
-  {
+  if (optimistic_result.has_value()) {
     return;
   }
   Context ctx;
-  //UNIMPLEMENTED("TODO(P2): Add implementation.");
-  WritePageGuard header_guard = bpm_->WritePage(header_page_id_); // get a write guard on header pg
-  auto header_pg = header_guard.AsMut<BPlusTreeHeaderPage>(); // get a pointer to the guard as a headertype obj
-  auto root_pg_id = header_pg->root_page_id_; // get roots page id from the header
-  ctx.header_page_=std::move(header_guard); // push into ctx headerpage to propogate back if needed
+  // UNIMPLEMENTED("TODO(P2): Add implementation.");
+  WritePageGuard header_guard = bpm_->WritePage(header_page_id_);  // get a write guard on header pg
+  auto header_pg = header_guard.AsMut<BPlusTreeHeaderPage>();      // get a pointer to the guard as a headertype obj
+  auto root_pg_id = header_pg->root_page_id_;                      // get roots page id from the header
+  ctx.header_page_ = std::move(header_guard);  // push into ctx headerpage to propogate back if needed
 
-  if(root_pg_id == INVALID_PAGE_ID) // tree doesnt exist
+  if (root_pg_id == INVALID_PAGE_ID)  // tree doesnt exist
   {
     return;
   }
-  //tree exists
+  // tree exists
   WritePageGuard curr_guard = bpm_->WritePage(root_pg_id);
   auto curr_pg = curr_guard.AsMut<BPlusTreePage>();
-   while(!curr_pg->IsLeafPage()) // internal page
+  while (!curr_pg->IsLeafPage())  // internal page
   {
-    
     auto internal = curr_guard.AsMut<InternalPage>();
-    int lo = 1; 
+    int lo = 1;
     int hi = curr_pg->GetSize();
-    
-    while(lo<hi)
-    {
-    int mid = lo + (hi - lo)/2;
-    int cmp = comparator_(internal->KeyAt(mid),key);
-    if(cmp > 0) // if key is smaller than the key at current mid
+
+    while (lo < hi) {
+      int mid = lo + (hi - lo) / 2;
+      int cmp = comparator_(internal->KeyAt(mid), key);
+      if (cmp > 0)  // if key is smaller than the key at current mid
       {
         hi = mid;
-      }
-    else  // if key is smaller than or equal to the key at current mid
+      } else  // if key is smaller than or equal to the key at current mid
       {
-        lo = mid+1;
-        
+        lo = mid + 1;
       }
-       
-    } 
-    
-    page_id_t child_id = internal->ValueAt(lo-1);
+    }
+
+    page_id_t child_id = internal->ValueAt(lo - 1);
     ctx.write_set_.push_back(std::move(curr_guard));
     curr_guard = bpm_->WritePage(child_id);
     curr_pg = curr_guard.AsMut<BPlusTreePage>();
-    
+
     //  if (!curr_pg->IsLeafPage() && curr_pg->GetSize() > curr_pg->GetMinSize() ) {
     //     ctx.write_set_.clear(); // release all ancestor write latches
     //     ctx.header_page_ = std::nullopt; // release header latch too
     // }
   }
-  //leaf
+  // leaf
   page_id_t curr_leaf_id = curr_guard.GetPageId();
-  
-  
+
   auto leaf_pg = curr_guard.AsMut<LeafPage>();
-  
-  
-  int hi=leaf_pg->GetSize();
+
+  int hi = leaf_pg->GetSize();
   int lo = 0;
-  
+
   int mid = 0;
-  while(lo<hi)
-  {
-    mid = lo + (hi-lo)/2;
-    int cmp = comparator_(leaf_pg->KeyAt(mid),key);
-    
-      if(cmp>0)
-      {
-        hi = mid;
-      }
-      else if (cmp <0)
-      {
-        lo = mid+1;
-      }
-      else // key found
-      {
-        if (NumTombs > 0)
-        {
-          int size_before = leaf_pg->GetSize();
-          AppendIncomingTombstone(leaf_pg, mid);
-          if (leaf_pg->GetSize() == size_before)  // no physical eviction happened
-          {
-            ctx.header_page_ = std::nullopt;
-            return;
-          }
-          // an eviction physically shrank this leaf — fall through to underflow handling below
-        }
-        else
-        {
-          for(int i = mid;i<leaf_pg->GetSize()-1;i++) // shift keys to the left
-          {
-            leaf_pg->SetValueAt(i,leaf_pg->ValueAt(i+1));
-            leaf_pg->SetKeyAt(i,leaf_pg->KeyAt(i+1));
-          }
-          leaf_pg->ChangeSizeBy(-1);
-        }
-        if(ctx.write_set_.empty())
-        {
-          if(leaf_pg->GetSize()==0)
-          {
-            ctx.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = INVALID_PAGE_ID;
-          }
-          ctx.header_page_ = std::nullopt;
-          return;
-        }
-        
-        if(leaf_pg->GetSize()>=leaf_pg->GetMinSize())
+  while (lo < hi) {
+    mid = lo + (hi - lo) / 2;
+    int cmp = comparator_(leaf_pg->KeyAt(mid), key);
+
+    if (cmp > 0) {
+      hi = mid;
+    } else if (cmp < 0) {
+      lo = mid + 1;
+    } else  // key found
+    {
+      if (NumTombs > 0) {
+        int size_before = leaf_pg->GetSize();
+        AppendIncomingTombstone(leaf_pg, mid);
+        if (leaf_pg->GetSize() == size_before)  // no physical eviction happened
         {
           ctx.header_page_ = std::nullopt;
           return;
         }
-        WritePageGuard parent_guard = std::move(ctx.write_set_.back());
-        ctx.write_set_.pop_back();
-        auto parent = parent_guard.AsMut<InternalPage>();
-        auto parent_id = parent_guard.GetPageId();
-        int leaf_idx = parent->ValueIndex(curr_leaf_id);
-        page_id_t left_sibling_id = INVALID_PAGE_ID;
-        page_id_t right_sibling_id = INVALID_PAGE_ID;
-        if(leaf_idx > 0) // sibling is to the left
+        // an eviction physically shrank this leaf — fall through to underflow handling below
+      } else {
+        for (int i = mid; i < leaf_pg->GetSize() - 1; i++)  // shift keys to the left
         {
-          left_sibling_id = parent->ValueAt(leaf_idx-1);
+          leaf_pg->SetValueAt(i, leaf_pg->ValueAt(i + 1));
+          leaf_pg->SetKeyAt(i, leaf_pg->KeyAt(i + 1));
         }
-        if(leaf_idx < parent->GetSize()-1) // sibling is to the right
-        {
-          right_sibling_id= parent->ValueAt(leaf_idx+1);
+        leaf_pg->ChangeSizeBy(-1);
+      }
+      if (ctx.write_set_.empty()) {
+        if (leaf_pg->GetSize() == 0) {
+          ctx.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = INVALID_PAGE_ID;
         }
+        ctx.header_page_ = std::nullopt;
+        return;
+      }
 
-        if(left_sibling_id !=INVALID_PAGE_ID)
-        {
-          WritePageGuard left_guard = bpm_->WritePage(left_sibling_id);
-          auto left = left_guard.AsMut<LeafPage>();
-          int left_size = left->GetSize();
-          if(left_size>left->GetMinSize())
-          {
-            //borrow
-            bool moved_was_tombstoned = NumTombs > 0 && left->IsIndexTombstoned(left_size - 1);
-            if (NumTombs > 0 && moved_was_tombstoned) {
-              left->RemoveTombstoneAt(left_size - 1);
-            }
+      if (leaf_pg->GetSize() >= leaf_pg->GetMinSize()) {
+        ctx.header_page_ = std::nullopt;
+        return;
+      }
+      WritePageGuard parent_guard = std::move(ctx.write_set_.back());
+      ctx.write_set_.pop_back();
+      auto parent = parent_guard.AsMut<InternalPage>();
+      auto parent_id = parent_guard.GetPageId();
+      int leaf_idx = parent->ValueIndex(curr_leaf_id);
 
-            for(int i=leaf_pg->GetSize() ; i>0 ;i--) // make index 0 empty by right shifting
-            {
-              leaf_pg->SetKeyAt(i,leaf_pg->KeyAt(i-1));
-              leaf_pg->SetValueAt(i,leaf_pg->ValueAt(i-1));
-            }
-            if (NumTombs > 0) {
-              // every existing entry in leaf_pg just shifted right by 1 — shift its tombstones too
-              for (auto idx : leaf_pg->GetTombstoneIndicesInOrder()) {
-                leaf_pg->RemoveTombstoneAt(static_cast<int>(idx));
-                leaf_pg->InsertTombstone(static_cast<int>(idx) + 1);
-              }
-            }
+      page_id_t left_sib = (leaf_idx > 0) ? parent->ValueAt(leaf_idx - 1) : INVALID_PAGE_ID;
+      page_id_t right_sib = (leaf_idx < parent->GetSize() - 1) ? parent->ValueAt(leaf_idx + 1) : INVALID_PAGE_ID;
 
-            auto left_val=left->ValueAt(left_size-1);
-            KeyType left_key = left->KeyAt(left_size-1);
-            
-            leaf_pg->SetKeyAt(0,left_key);
-            leaf_pg->SetValueAt(0,left_val);
-            leaf_pg->ChangeSizeBy(1);
-            left->ChangeSizeBy(-1);
+      if (left_sib != INVALID_PAGE_ID) {
+        WritePageGuard lg = bpm_->WritePage(left_sib);
+        auto left = lg.AsMut<LeafPage>();
+        int ls = left->GetSize();
+        bool lt = NumTombs > 0 && left->IsIndexTombstoned(ls - 1);
+        bool le = lt && leaf_pg->IsTombstoneFull();
 
-            if (NumTombs > 0 && moved_was_tombstoned) {
-              AppendIncomingTombstone(leaf_pg, 0);  // recipient's own (just shifted) tombstones are older, evicted first
-            }
-
-            parent->SetKeyAt(leaf_idx,leaf_pg->KeyAt(0));
-            ctx.header_page_ = std::nullopt;
-            return;
+        if (ls > left->GetMinSize() && !le) {
+          // BORROW FROM LEFT
+          if (NumTombs > 0 && lt) left->RemoveTombstoneAt(ls - 1);
+          for (int i = leaf_pg->GetSize(); i > 0; i--) {
+            leaf_pg->SetKeyAt(i, leaf_pg->KeyAt(i - 1));
+            leaf_pg->SetValueAt(i, leaf_pg->ValueAt(i - 1));
           }
-          else {
-            //merge
-            int orig_left_size = left->GetSize();
-            std::vector<KeyType> keys;
-            std::vector<ValueType> vals; //temp vectors to store 
-            int count =0;
-            for(int i=0;i<left->GetSize();i++)
-            {
-              keys.push_back(left->KeyAt(i));
-              vals.push_back(left->ValueAt(i));
-              count++;
-            }
-            for(int i=0;i<leaf_pg->GetSize();i++)
-            {
-              keys.push_back(leaf_pg->KeyAt(i));
-              vals.push_back(leaf_pg->ValueAt(i));
-              count++;
-            }
-            
-            if(count<=left->GetMaxSize())  
-            {  for(int i=0;i<count;i++)
-              {
-                left->SetValueAt(i,vals[i]);
-                
-                left->SetKeyAt(i,keys[i]);
-              
-              }
-              left->SetSize(count);
-              if (NumTombs > 0) {
-                MergeIncomingTombstones(left, leaf_pg, orig_left_size);
-              }
-              left->SetNextPageId(leaf_pg->GetNextPageId());
-              leaf_pg->SetSize(0);
-              for(int i = leaf_idx; i<parent->GetSize()-1; i++) // remove the leaf seperator at leaf_idx by left shifting
-              {
-                parent->SetKeyAt(i,parent->KeyAt(i+1));
-                parent->SetValueAt(i,parent->ValueAt(i+1));
-              }
-              parent->ChangeSizeBy(-1);
-              
-              if(parent->GetSize()<parent->GetMinSize())
-              {
-
-                RemoveFromParent(ctx,parent_id, std::move(parent_guard));
-
-                return;
-                
-              }
-              else {
-              ctx.header_page_ = std::nullopt;
-              return;
-              }
+          if (NumTombs > 0) {
+            for (auto idx : leaf_pg->GetTombstoneIndicesInOrder()) {
+              leaf_pg->RemoveTombstoneAt(static_cast<int>(idx));
+              leaf_pg->InsertTombstone(static_cast<int>(idx) + 1);
             }
           }
-        }
-        
-        else if(right_sibling_id != INVALID_PAGE_ID)
-        { //borrow
-          WritePageGuard right_guard = bpm_->WritePage(right_sibling_id);
-          auto right = right_guard.AsMut<LeafPage>();
-          int right_size = right->GetSize();
-          if(right_size>right->GetMinSize())
-          {
-            bool moved_was_tombstoned = NumTombs > 0 && right->IsIndexTombstoned(0);
-            if (NumTombs > 0 && moved_was_tombstoned) {
-              right->RemoveTombstoneAt(0);
-            }
-
-            int dest_idx = leaf_pg->GetSize();
-            auto right_val = right->ValueAt(0);
-            auto right_key = right->KeyAt(0);
-            leaf_pg->SetValueAt(dest_idx,right_val);
-            leaf_pg->SetKeyAt(dest_idx,right_key);
-            leaf_pg->ChangeSizeBy(1);
-            for(int i= 0 ;i<right->GetSize()-1;i++) // push back the entries to the left in right node to fill the 0 idx
-            {
-              right->SetValueAt(i,right->ValueAt(i+1));
-              right->SetKeyAt(i,right->KeyAt(i+1));
-            }
-            right->ChangeSizeBy(-1);
-            if (NumTombs > 0) {
-              right->ShiftTombstonesAfterErase(0);
-            }
-            if (NumTombs > 0 && moved_was_tombstoned) {
-              AppendIncomingTombstone(leaf_pg, dest_idx);
-            }
-            parent->SetKeyAt(leaf_idx+1,right->KeyAt(0));
-            ctx.header_page_ = std::nullopt;
-            return;
+          leaf_pg->SetKeyAt(0, left->KeyAt(ls - 1));
+          leaf_pg->SetValueAt(0, left->ValueAt(ls - 1));
+          leaf_pg->ChangeSizeBy(1);
+          left->ChangeSizeBy(-1);
+          if (NumTombs > 0 && lt) AppendIncomingTombstone(leaf_pg, 0);
+          parent->SetKeyAt(leaf_idx, leaf_pg->KeyAt(0));
+          ctx.header_page_ = std::nullopt;
+          return;
+        } else if (ls <= left->GetMinSize() || (le && right_sib == INVALID_PAGE_ID)) {
+          // MERGE WITH LEFT
+          int orig_ls = left->GetSize();
+          std::vector<KeyType> keys;
+          std::vector<ValueType> vals;
+          for (int i = 0; i < left->GetSize(); i++) {
+            keys.push_back(left->KeyAt(i));
+            vals.push_back(left->ValueAt(i));
           }
-          else
-          {
-            // merge
-            int leaf_size = leaf_pg->GetSize();
-            for(int i=0;i<right->GetSize();i++)
-            {
-              leaf_pg->SetValueAt(leaf_size+i,right->ValueAt(i));
-              leaf_pg->SetKeyAt(leaf_size+i,right->KeyAt(i));
+          for (int i = 0; i < leaf_pg->GetSize(); i++) {
+            keys.push_back(leaf_pg->KeyAt(i));
+            vals.push_back(leaf_pg->ValueAt(i));
+          }
+          int count = static_cast<int>(keys.size());
+          if (count <= left->GetMaxSize()) {
+            for (int i = 0; i < count; i++) {
+              left->SetValueAt(i, vals[i]);
+              left->SetKeyAt(i, keys[i]);
             }
-            leaf_pg->ChangeSizeBy(right->GetSize());
-            if (NumTombs > 0) {
-              MergeIncomingTombstones(leaf_pg, right, leaf_size);
-            }
-            leaf_pg->SetNextPageId(right->GetNextPageId());
-            right->SetSize(0);
-            
-            for(int i=leaf_idx+1;i<parent->GetSize()-1;i++)
-            {
-              parent->SetValueAt(i,parent->ValueAt(i+1));
-              parent->SetKeyAt(i,parent->KeyAt(i+1));
+            left->SetSize(count);
+            if (NumTombs > 0) MergeIncomingTombstones(left, leaf_pg, orig_ls);
+            left->SetNextPageId(leaf_pg->GetNextPageId());
+            leaf_pg->SetSize(0);
+            for (int i = leaf_idx; i < parent->GetSize() - 1; i++) {
+              parent->SetKeyAt(i, parent->KeyAt(i + 1));
+              parent->SetValueAt(i, parent->ValueAt(i + 1));
             }
             parent->ChangeSizeBy(-1);
-            if(parent->GetSize()<parent->GetMinSize())
-            {
-              RemoveFromParent(ctx,parent_id, std::move(parent_guard));
+            if (parent->GetSize() < parent->GetMinSize()) {
+              RemoveFromParent(ctx, parent_id, std::move(parent_guard));
               return;
             }
-            else {
-              ctx.header_page_ = std::nullopt;
-              return;
-            }
+            ctx.header_page_ = std::nullopt;
+            return;
           }
         }
-        
+        // else: le && right_sib exists → skip left, fall through to right
       }
-    
+
+      if (right_sib != INVALID_PAGE_ID) {
+        WritePageGuard rg = bpm_->WritePage(right_sib);
+        auto right = rg.AsMut<LeafPage>();
+        int rs = right->GetSize();
+        bool rt = NumTombs > 0 && right->IsIndexTombstoned(0);
+        bool re = rt && leaf_pg->IsTombstoneFull();
+
+        if (rs > right->GetMinSize() && !re) {
+          // BORROW FROM RIGHT
+          if (NumTombs > 0 && rt) right->RemoveTombstoneAt(0);
+          int dest = leaf_pg->GetSize();
+          leaf_pg->SetValueAt(dest, right->ValueAt(0));
+          leaf_pg->SetKeyAt(dest, right->KeyAt(0));
+          leaf_pg->ChangeSizeBy(1);
+          for (int i = 0; i < rs - 1; i++) {
+            right->SetValueAt(i, right->ValueAt(i + 1));
+            right->SetKeyAt(i, right->KeyAt(i + 1));
+          }
+          right->ChangeSizeBy(-1);
+          if (NumTombs > 0) right->ShiftTombstonesAfterErase(0);
+          if (NumTombs > 0 && rt) AppendIncomingTombstone(leaf_pg, dest);
+          parent->SetKeyAt(leaf_idx + 1, right->KeyAt(0));
+          ctx.header_page_ = std::nullopt;
+          return;
+        } else {
+          // MERGE WITH RIGHT
+          int leaf_size = leaf_pg->GetSize();
+          for (int i = 0; i < rs; i++) {
+            leaf_pg->SetValueAt(leaf_size + i, right->ValueAt(i));
+            leaf_pg->SetKeyAt(leaf_size + i, right->KeyAt(i));
+          }
+          leaf_pg->ChangeSizeBy(rs);
+          if (NumTombs > 0) MergeIncomingTombstones(leaf_pg, right, leaf_size);
+          leaf_pg->SetNextPageId(right->GetNextPageId());
+          right->SetSize(0);
+          for (int i = leaf_idx + 1; i < parent->GetSize() - 1; i++) {
+            parent->SetValueAt(i, parent->ValueAt(i + 1));
+            parent->SetKeyAt(i, parent->KeyAt(i + 1));
+          }
+          parent->ChangeSizeBy(-1);
+          if (parent->GetSize() < parent->GetMinSize()) {
+            RemoveFromParent(ctx, parent_id, std::move(parent_guard));
+            return;
+          }
+          ctx.header_page_ = std::nullopt;
+          return;
+        }
+      }
+    }
   }
-  ctx.header_page_ = std::nullopt;
-  return;
-  
 }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-void BPLUSTREE_TYPE::RemoveFromParent(Context &ctx, page_id_t node_id,WritePageGuard node_guard)
-{
-  if(ctx.write_set_.empty()) // if the selected node is the root
+void BPLUSTREE_TYPE::RemoveFromParent(Context &ctx, page_id_t node_id, WritePageGuard node_guard) {
+  if (ctx.write_set_.empty())  // if the selected node is the root
   {
-    
     auto root = node_guard.AsMut<InternalPage>();
-    if(root->GetSize() == 1) // has only one child so make the child the root
+    if (root->GetSize() == 1)  // has only one child so make the child the root
     {
       page_id_t new_root_id = root->ValueAt(0);
       ctx.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = new_root_id;
-      
     }
     // if more than one child keep as is since there is no min max size limit for root
     ctx.header_page_ = std::nullopt;
@@ -947,68 +843,64 @@ void BPLUSTREE_TYPE::RemoveFromParent(Context &ctx, page_id_t node_id,WritePageG
   int nodes_idx = parent->ValueIndex(node_id);
 
   // WritePageGuard curr_node_guard = bpm_->WritePage(node_id);
-   auto curr_node = node_guard.AsMut<InternalPage>();
-  
+  auto curr_node = node_guard.AsMut<InternalPage>();
 
   page_id_t left_sibling_id = INVALID_PAGE_ID;
   page_id_t right_sibling_id = INVALID_PAGE_ID;
-  if(nodes_idx>0) // left sibling exists
+  if (nodes_idx > 0)  // left sibling exists
   {
-    left_sibling_id = parent->ValueAt(nodes_idx-1);
+    left_sibling_id = parent->ValueAt(nodes_idx - 1);
   }
-  if (nodes_idx<parent->GetSize()-1) // right sibling exists
+  if (nodes_idx < parent->GetSize() - 1)  // right sibling exists
   {
-    right_sibling_id = parent->ValueAt(nodes_idx+1);
+    right_sibling_id = parent->ValueAt(nodes_idx + 1);
   }
-
 
   ////// sibling cases
 
   ////CASE 1
-  if(left_sibling_id != INVALID_PAGE_ID)
-  {
+  if (left_sibling_id != INVALID_PAGE_ID) {
     WritePageGuard left_guard = bpm_->WritePage(left_sibling_id);
     auto left = left_guard.AsMut<InternalPage>();
     int left_size = left->GetSize();
-    if(left_size>left->GetMinSize())
-    { // borrow
-      page_id_t send_to_curr_id =left->ValueAt(left_size-1); // value to send to current node 0 idx
-      for(int i=curr_node->GetSize(); i>0 ;i--) // right shift to make space for old seperator key
+    if (left_size > left->GetMinSize()) {                        // borrow
+      page_id_t send_to_curr_id = left->ValueAt(left_size - 1);  // value to send to current node 0 idx
+      for (int i = curr_node->GetSize(); i > 0; i--)             // right shift to make space for old seperator key
       {
-        curr_node->SetValueAt(i,curr_node->ValueAt(i-1));
-        curr_node->SetKeyAt(i,curr_node->KeyAt(i-1));
+        curr_node->SetValueAt(i, curr_node->ValueAt(i - 1));
+        curr_node->SetKeyAt(i, curr_node->KeyAt(i - 1));
       }
-      curr_node->SetValueAt(0,send_to_curr_id);
+      curr_node->SetValueAt(0, send_to_curr_id);
       curr_node->ChangeSizeBy(1);
       left->ChangeSizeBy(-1);
-      curr_node->SetKeyAt(1,parent->KeyAt(nodes_idx));
-      parent->SetKeyAt(nodes_idx ,left->KeyAt(left_size-1)); // send left nodes last key to replace parents curr seperator
+      curr_node->SetKeyAt(1, parent->KeyAt(nodes_idx));
+      parent->SetKeyAt(nodes_idx,
+                       left->KeyAt(left_size - 1));  // send left nodes last key to replace parents curr seperator
       ctx.header_page_ = std::nullopt;
       return;
-    }
-    else {
-    //merge
-      
-      left->SetKeyAt(left_size,parent->KeyAt(nodes_idx)); // parents seperator sent to end of left sibling
-      left->SetValueAt(left_size,curr_node->ValueAt(0)); // set val of 1st key of currnode to last slot in left sibling
+    } else {
+      // merge
+
+      left->SetKeyAt(left_size, parent->KeyAt(nodes_idx));  // parents seperator sent to end of left sibling
+      left->SetValueAt(left_size,
+                       curr_node->ValueAt(0));  // set val of 1st key of currnode to last slot in left sibling
       left->ChangeSizeBy(1);
-      
-      for(int i=1;i<curr_node->GetSize();i++) // append curr nodes entries to after seperator key and merge
+
+      for (int i = 1; i < curr_node->GetSize(); i++)  // append curr nodes entries to after seperator key and merge
       {
-        left->SetValueAt(left_size+i,curr_node->ValueAt(i));
-        left->SetKeyAt(left_size+i, curr_node->KeyAt(i));
+        left->SetValueAt(left_size + i, curr_node->ValueAt(i));
+        left->SetKeyAt(left_size + i, curr_node->KeyAt(i));
       }
-      left->SetSize(left_size + curr_node->GetSize()); // adjust the size of merged node
-      curr_node->SetSize(0); // nullify the empty node after merge
-      for(int i=nodes_idx;i<parent->GetSize()-1;i++) // remove seperator key from the parent after merge
+      left->SetSize(left_size + curr_node->GetSize());         // adjust the size of merged node
+      curr_node->SetSize(0);                                   // nullify the empty node after merge
+      for (int i = nodes_idx; i < parent->GetSize() - 1; i++)  // remove seperator key from the parent after merge
       {
-        parent->SetValueAt(i,parent->ValueAt(i+1));
-        parent->SetKeyAt(i,parent->KeyAt(i+1));
+        parent->SetValueAt(i, parent->ValueAt(i + 1));
+        parent->SetKeyAt(i, parent->KeyAt(i + 1));
       }
-      parent->ChangeSizeBy(-1); // adjust the size of parent after removing seperator
-      if(parent->GetSize()<parent->GetMinSize())
-      {
-        RemoveFromParent(ctx, parent_id,std::move(parent_guard));
+      parent->ChangeSizeBy(-1);  // adjust the size of parent after removing seperator
+      if (parent->GetSize() < parent->GetMinSize()) {
+        RemoveFromParent(ctx, parent_id, std::move(parent_guard));
         return;
       }
       ctx.header_page_ = std::nullopt;
@@ -1016,70 +908,64 @@ void BPLUSTREE_TYPE::RemoveFromParent(Context &ctx, page_id_t node_id,WritePageG
     }
   }
 
-
-
   ////CASE 2
-  else if (right_sibling_id != INVALID_PAGE_ID) // curr = right, left = curr
+  else if (right_sibling_id != INVALID_PAGE_ID)  // curr = right, left = curr
   {
-    
     WritePageGuard right_guard = bpm_->WritePage(right_sibling_id);
     auto right = right_guard.AsMut<InternalPage>();
     int curr_size = curr_node->GetSize();
     int right_size = right->GetSize();
-    if(right->GetSize()>right->GetMinSize())
-    { // borrow
-      page_id_t send_to_curr_id =right->ValueAt(0); // value to send to curr node last idx
+    if (right->GetSize() > right->GetMinSize()) {     // borrow
+      page_id_t send_to_curr_id = right->ValueAt(0);  // value to send to curr node last idx
       KeyType new_parent_sep = right->KeyAt(1);
 
-      curr_node->SetKeyAt(curr_size,parent->KeyAt(nodes_idx+1)); // move old seperator to currs last index
-      curr_node->SetValueAt(curr_size,send_to_curr_id);
+      curr_node->SetKeyAt(curr_size, parent->KeyAt(nodes_idx + 1));  // move old seperator to currs last index
+      curr_node->SetValueAt(curr_size, send_to_curr_id);
       curr_node->ChangeSizeBy(1);
 
-      for(int i=0; i<right_size-1 ;i++) // right shift to make space for old seperator key
+      for (int i = 0; i < right_size - 1; i++)  // right shift to make space for old seperator key
       {
-        right->SetValueAt(i,right->ValueAt(i+1));
-        right->SetKeyAt(i,right->KeyAt(i+1));
+        right->SetValueAt(i, right->ValueAt(i + 1));
+        right->SetKeyAt(i, right->KeyAt(i + 1));
       }
       right->ChangeSizeBy(-1);
 
-      parent->SetKeyAt(nodes_idx+1,new_parent_sep);
+      parent->SetKeyAt(nodes_idx + 1, new_parent_sep);
       ctx.header_page_ = std::nullopt;
       return;
-    }
-    else {
+    } else {
       // merge
-      curr_node->SetKeyAt(curr_size,parent->KeyAt(nodes_idx +1)); // append seperator to front of currnode
-      curr_node->SetValueAt(curr_size,right->ValueAt(0));
+      curr_node->SetKeyAt(curr_size, parent->KeyAt(nodes_idx + 1));  // append seperator to front of currnode
+      curr_node->SetValueAt(curr_size, right->ValueAt(0));
       curr_node->ChangeSizeBy(1);
 
-      for(int i=1; i<right_size;i++) // copy entries from right to curr to merge
+      for (int i = 1; i < right_size; i++)  // copy entries from right to curr to merge
       {
-        curr_node->SetValueAt(curr_size+i,right->ValueAt(i));
-        curr_node->SetKeyAt(curr_size+i,right->KeyAt(i));
+        curr_node->SetValueAt(curr_size + i, right->ValueAt(i));
+        curr_node->SetKeyAt(curr_size + i, right->KeyAt(i));
       }
-      curr_node->SetSize(curr_size + right_size); // adjust the size of curr node after merging
-      right->SetSize(0); // null the empty node
+      curr_node->SetSize(curr_size + right_size);  // adjust the size of curr node after merging
+      right->SetSize(0);                           // null the empty node
 
-      for(int i=nodes_idx+1;i<parent->GetSize()-1;i++) //remove the seperator from the parent by left shifting
+      for (int i = nodes_idx + 1; i < parent->GetSize() - 1;
+           i++)  // remove the seperator from the parent by left shifting
       {
-        parent->SetValueAt(i, parent->ValueAt(i+1));
-        parent->SetKeyAt(i, parent->KeyAt(i+1));
+        parent->SetValueAt(i, parent->ValueAt(i + 1));
+        parent->SetKeyAt(i, parent->KeyAt(i + 1));
       }
 
-      parent->ChangeSizeBy(-1); // adjust size after removing sep
+      parent->ChangeSizeBy(-1);  // adjust size after removing sep
 
-      if(parent->GetSize() < parent->GetMinSize())
-      {
-        RemoveFromParent(ctx, parent_id,std::move(parent_guard));
+      if (parent->GetSize() < parent->GetMinSize()) {
+        RemoveFromParent(ctx, parent_id, std::move(parent_guard));
         return;
       }
       ctx.header_page_ = std::nullopt;
       return;
     }
-    
   }
 
-}//func
+}  // func
 
 /*****************************************************************************
  * INDEX ITERATOR
@@ -1093,28 +979,25 @@ void BPLUSTREE_TYPE::RemoveFromParent(Context &ctx, page_id_t node_id,WritePageG
  * @return : index iterator
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE { 
-  //UNIMPLEMENTED("TODO(P2): Add implementation."); 
+auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
+  // UNIMPLEMENTED("TODO(P2): Add implementation.");
   ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
   auto header = header_guard.As<BPlusTreeHeaderPage>();
   int root_id = header->root_page_id_;
 
-  if(root_id == INVALID_PAGE_ID)
-  {
+  if (root_id == INVALID_PAGE_ID) {
     return INDEXITERATOR_TYPE();
   }
 
-
   ReadPageGuard curr_guard = bpm_->ReadPage(root_id);
   auto curr_page = curr_guard.As<BPlusTreePage>();
-  while(!curr_page->IsLeafPage())
-  {
+  while (!curr_page->IsLeafPage()) {
     auto internal = curr_guard.As<InternalPage>();
     page_id_t child_id = internal->ValueAt(0);
-      curr_guard = bpm_->ReadPage(child_id);
-      curr_page = curr_guard.As<BPlusTreePage>();
+    curr_guard = bpm_->ReadPage(child_id);
+    curr_page = curr_guard.As<BPlusTreePage>();
   }
-  return INDEXITERATOR_TYPE(bpm_,std::move(curr_guard),0);
+  return INDEXITERATOR_TYPE(bpm_, std::move(curr_guard), 0);
 }
 
 /**
@@ -1123,78 +1006,64 @@ auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
  * @return : index iterator
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE { 
-  //UNIMPLEMENTED("TODO(P2): Add implementation."); 
+auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
+  // UNIMPLEMENTED("TODO(P2): Add implementation.");
   ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
   auto header_pg = header_guard.As<BPlusTreeHeaderPage>();
   auto header_root_id = header_pg->root_page_id_;
-  
-  if(header_root_id == INVALID_PAGE_ID) // check if tree even exists
+
+  if (header_root_id == INVALID_PAGE_ID)  // check if tree even exists
   {
     header_guard.Drop();
     return INDEXITERATOR_TYPE();
   }
-  
+
   ReadPageGuard curr_guard = bpm_->ReadPage(header_root_id);
   header_guard.Drop();
   auto curr_page = curr_guard.As<BPlusTreePage>();
-  while(!curr_page->IsLeafPage())
-  {
+  while (!curr_page->IsLeafPage()) {
     auto internal = curr_guard.As<InternalPage>();
-   
-      int hi = curr_page->GetSize(),lo = 1;
-      while(lo<hi)
+
+    int hi = curr_page->GetSize(), lo = 1;
+    while (lo < hi) {
+      int mid = lo + (hi - lo) / 2;
+      auto comp = comparator_(internal->KeyAt(mid), key);
+      if (comp > 0)  // if key is smaller than the key at current mid
       {
-        
-        int mid = lo + (hi-lo)/2;
-        auto comp = comparator_(internal->KeyAt(mid),key);
-        if(comp > 0) // if key is smaller than the key at current mid
-        {
-          hi = mid;
-        }
-        else  // if key is smaller than or equal to the key at current mid
-        {
-          lo = mid+1;
-          
-        }
-        
+        hi = mid;
+      } else  // if key is smaller than or equal to the key at current mid
+      {
+        lo = mid + 1;
       }
-      page_id_t child_id = internal->ValueAt(lo -1);
-      curr_guard = bpm_->ReadPage(child_id);
-      curr_page = curr_guard.As<BPlusTreePage>();
-      
     }
-      auto leaf_pg = curr_guard.As<LeafPage>();
-      int hi = curr_page->GetSize();
-      int lo = 0;
-      while(lo<hi)
-      {
-        int mid = lo + (hi-lo)/2; 
-        auto comp = comparator_(leaf_pg->KeyAt(mid),key);
-        if(comp > 0) // if key is smaller than the key at current mid
-        {
-          hi = mid;
-        }
-        else if (comp<0) // if key is smaller than or equal to the key at current mid
-        {
-          lo = mid+1;
-          
-        }
-        else
-        {
-          auto tombstones = leaf_pg->GetTombstones();
-          for(auto &tombs : tombstones)
-          {
-            if(comparator_(tombs,key) == 0)
-            {
-              return INDEXITERATOR_TYPE(); // the key has been logically deleted
-            }
-          }
-          return INDEXITERATOR_TYPE(bpm_,std::move(curr_guard),lo);
-          
+    page_id_t child_id = internal->ValueAt(lo - 1);
+    curr_guard = bpm_->ReadPage(child_id);
+    curr_page = curr_guard.As<BPlusTreePage>();
+  }
+  auto leaf_pg = curr_guard.As<LeafPage>();
+  int hi = curr_page->GetSize();
+  int lo = 0;
+  while (lo < hi) {
+    int mid = lo + (hi - lo) / 2;
+    auto comp = comparator_(leaf_pg->KeyAt(mid), key);
+    if (comp > 0)  // if key is smaller than the key at current mid
+    {
+      hi = mid;
+    } else if (comp < 0)  // if key is smaller than or equal to the key at current mid
+    {
+      lo = mid + 1;
+
+    } else {
+      auto tombstones = leaf_pg->GetTombstones();
+      for (auto &tombs : tombstones) {
+        if (comparator_(tombs, key) == 0) {
+          return INDEXITERATOR_TYPE();  // the key has been logically deleted
         }
       }
-      return INDEXITERATOR_TYPE();
+      return INDEXITERATOR_TYPE(bpm_, std::move(curr_guard), lo);
+    }
+  }
+  return INDEXITERATOR_TYPE();
 }
 
 /**
@@ -1203,8 +1072,8 @@ auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
  * @return : index iterator
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE { 
-  //UNIMPLEMENTED("TODO(P2): Add implementation."); 
+auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE {
+  // UNIMPLEMENTED("TODO(P2): Add implementation.");
   return INDEXITERATOR_TYPE();
 }
 
@@ -1214,8 +1083,8 @@ auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE {
  * You may want to implement this while implementing Task #3.
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::GetRootPageId() -> page_id_t { 
-  //UNIMPLEMENTED("TODO(P2): Add implementation."); 
+auto BPLUSTREE_TYPE::GetRootPageId() -> page_id_t {
+  // UNIMPLEMENTED("TODO(P2): Add implementation.");
   ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
   auto header_pg = header_guard.As<BPlusTreeHeaderPage>();
   return header_pg->root_page_id_;

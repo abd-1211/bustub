@@ -95,7 +95,7 @@ auto ExtractPointLookupKeys(const AbstractExpressionRef &expr, std::optional<uin
       return false;
     }
     return ExtractPointLookupKeys(expr->GetChildAt(0), col_idx, keys) &&
-          ExtractPointLookupKeys(expr->GetChildAt(1), col_idx, keys);
+           ExtractPointLookupKeys(expr->GetChildAt(1), col_idx, keys);
   }
 
   return false;

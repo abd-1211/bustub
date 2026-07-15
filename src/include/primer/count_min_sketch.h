@@ -12,11 +12,11 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <utility>
 #include <vector>
-#include <atomic>
 #include "common/util/hash_util.h"
 
 namespace bustub {
@@ -28,7 +28,7 @@ class CountMinSketch {
    * @param width Number of buckets
    * @param depth Number of hash functions
    */
-  
+
   explicit CountMinSketch(uint32_t width, uint32_t depth);
 
   CountMinSketch() = delete;                                            // Default constructor deleted
@@ -84,7 +84,7 @@ class CountMinSketch {
   uint32_t width_;  // Number of buckets for each hash function
   uint32_t depth_;  // Number of independent hash functions
   /** Pre-computed hash functions for each row */
-  std::vector<std::vector<std::atomic<uint32_t>>> sketch_; 
+  std::vector<std::vector<std::atomic<uint32_t>>> sketch_;
   std::vector<std::function<size_t(const KeyType &)>> hash_functions_;
 
   /** @spring2026 PLEASE DO NOT MODIFY THE FOLLOWING */

@@ -33,10 +33,10 @@ FULL_INDEX_TEMPLATE_ARGUMENTS_DEFN
 class IndexIterator {
  public:
   // you may define your own constructor based on your member variables
-  IndexIterator() ;
+  IndexIterator();
   ~IndexIterator();  // NOLINT
-  //custom constructor
-  IndexIterator(std::shared_ptr<TracedBufferPoolManager> bpm, ReadPageGuard leaf_guard ,int curr_idx);
+  // custom constructor
+  IndexIterator(std::shared_ptr<TracedBufferPoolManager> bpm, ReadPageGuard leaf_guard, int curr_idx);
 
   auto IsEnd() -> bool;
 
@@ -44,20 +44,18 @@ class IndexIterator {
 
   auto operator++() -> IndexIterator &;
 
-  auto operator==(const IndexIterator &itr) const -> bool { 
-   //UNIMPLEMENTED("TODO(P2): Add implementation."); 
-    if(bpm_ == nullptr && itr.bpm_ == nullptr)
-    {
+  auto operator==(const IndexIterator &itr) const -> bool {
+    // UNIMPLEMENTED("TODO(P2): Add implementation.");
+    if (bpm_ == nullptr && itr.bpm_ == nullptr) {
       return true;
     }
-    if(bpm_ == nullptr || itr.bpm_ == nullptr)
-    {
+    if (bpm_ == nullptr || itr.bpm_ == nullptr) {
       return false;
     }
     return leaf_guard_.GetPageId() == itr.leaf_guard_.GetPageId() && curr_idx_ == itr.curr_idx_;
   }
 
-  auto operator!=(const IndexIterator &itr) const -> bool { //UNIMPLEMENTED("TODO(P2): Add implementation."); 
+  auto operator!=(const IndexIterator &itr) const -> bool {  // UNIMPLEMENTED("TODO(P2): Add implementation.");
     return !(*this == itr);
   }
 
@@ -69,7 +67,6 @@ class IndexIterator {
   int curr_idx_{0};
   KeyType curr_key_;
   ValueType curr_val_;
-
 };
 
 }  // namespace bustub

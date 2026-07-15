@@ -62,7 +62,7 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
   while (child_executor_->Next(&child_tuples, &child_rids, batch_size)) {
     for (const auto &tuple : child_tuples) {
       auto inserted_rid = table_info_->table_->InsertTuple(TupleMeta{0, false}, tuple, exec_ctx_->GetLockManager(),
-                                                          exec_ctx_->GetTransaction(), table_info_->oid_);
+                                                           exec_ctx_->GetTransaction(), table_info_->oid_);
       BUSTUB_ENSURE(inserted_rid.has_value(), "InsertExecutor: failed to insert tuple into table heap");
 
       for (const auto &index_info : exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_)) {

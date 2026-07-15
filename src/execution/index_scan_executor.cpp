@@ -28,11 +28,14 @@ void IndexScanExecutor::Init() {
 
   table_info_ = catalog->GetTable(plan_->table_oid_);
   index_info_ = catalog->GetIndex(plan_->GetIndexOid());
-  BUSTUB_ASSERT(table_info_ != nullptr, "IndexScanExecutor: table not found in catalog");
-  BUSTUB_ASSERT(index_info_ != nullptr, "IndexScanExecutor: index not found in catalog");
+  Index *idx_ptr = index_info_->index_.get();
+std::cerr << "DEBUG: index_oid=" << plan_->GetIndexOid()
+          << " index_name=" << index_info_->name_
+          << " table_name=" << index_info_->table_name_
+          << " runtime_type=" << typeid(*idx_ptr).name()
+          << std::endl;
 
-  // This project's index scan only needs to support a single-integer-column index.
-  tree_ = dynamic_cast<BPlusTreeIndexForTwoIntegerColumn *>(index_info_->index_.get());
+tree_ = dynamic_cast<BPlusTreeIndexForTwoIntegerColumn *>(idx_ptr);
   BUSTUB_ASSERT(tree_ != nullptr, "IndexScanExecutor: expected BPlusTreeIndexForTwoIntegerColumn");
 
   // Reset scan state -- Init() may be called more than once (e.g. re-executed queries).

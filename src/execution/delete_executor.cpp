@@ -23,10 +23,8 @@ namespace bustub {
 /**
  * Construct a new DeleteExecutor instance.
  */
-DeleteExecutor::DeleteExecutor(
-    ExecutorContext *exec_ctx,
-    const DeletePlanNode *plan,
-    std::unique_ptr<AbstractExecutor> &&child_executor)
+DeleteExecutor::DeleteExecutor(ExecutorContext *exec_ctx, const DeletePlanNode *plan,
+                               std::unique_ptr<AbstractExecutor> &&child_executor)
     : AbstractExecutor(exec_ctx),
       plan_(plan),
       table_info_(exec_ctx->GetCatalog()->GetTable(plan->GetTableOid()).get()),
@@ -41,9 +39,7 @@ void DeleteExecutor::Init() {
 /**
  * Yield the number of rows deleted.
  */
-auto DeleteExecutor::Next(std::vector<Tuple> *tuple_batch,
-                          std::vector<RID> *rid_batch,
-                          size_t batch_size) -> bool {
+auto DeleteExecutor::Next(std::vector<Tuple> *tuple_batch, std::vector<RID> *rid_batch, size_t batch_size) -> bool {
   if (has_executed_) {
     return false;
   }
@@ -56,8 +52,7 @@ auto DeleteExecutor::Next(std::vector<Tuple> *tuple_batch,
   std::vector<Tuple> child_tuples;
   std::vector<RID> child_rids;
 
-  auto indexes =
-      exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
+  auto indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
 
   while (child_executor_->Next(&child_tuples, &child_rids, batch_size)) {
     for (size_t i = 0; i < child_tuples.size(); i++) {
@@ -73,14 +68,9 @@ auto DeleteExecutor::Next(std::vector<Tuple> *tuple_batch,
       // Remove tuple from every index
       for (const auto &index_info : indexes) {
         Tuple key =
-            tuple.KeyFromTuple(table_info_->schema_,
-                               index_info->key_schema_,
-                               index_info->index_->GetKeyAttrs());
+            tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
 
-        index_info->index_->DeleteEntry(
-            key,
-            rid,
-            exec_ctx_->GetTransaction());
+        index_info->index_->DeleteEntry(key, rid, exec_ctx_->GetTransaction());
       }
 
       deleted_rows++;
@@ -90,9 +80,7 @@ auto DeleteExecutor::Next(std::vector<Tuple> *tuple_batch,
     child_rids.clear();
   }
 
-  tuple_batch->emplace_back(
-      std::vector<Value>{Value(TypeId::INTEGER, deleted_rows)},
-      &GetOutputSchema());
+  tuple_batch->emplace_back(std::vector<Value>{Value(TypeId::INTEGER, deleted_rows)}, &GetOutputSchema());
 
   has_executed_ = true;
   return true;

@@ -127,9 +127,10 @@ class BufferPoolManager {
   auto GetPinCount(page_id_t page_id) -> std::optional<size_t>;
 
  private:
-
- auto getframe(page_id_t page_id,AccessType access_type)->std::optional<frame_id_t>; // helper function to get frame for checkedwrite/readpage
- auto pincounthelper(page_id_t page_id)->std::optional<size_t>;//helper function to get pincount while avoiding double lock on bpm latch
+  auto getframe(page_id_t page_id, AccessType access_type)
+      -> std::optional<frame_id_t>;  // helper function to get frame for checkedwrite/readpage
+  auto pincounthelper(page_id_t page_id)
+      -> std::optional<size_t>;  // helper function to get pincount while avoiding double lock on bpm latch
   /** @brief The number of frames in the buffer pool. */
   const size_t num_frames_;
 

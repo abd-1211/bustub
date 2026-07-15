@@ -34,14 +34,10 @@ class UpdateExecutor : public AbstractExecutor {
 
   void Init() override;
 
-  auto Next(std::vector<Tuple> *tuple_batch,
-            std::vector<RID> *rid_batch,
-            size_t batch_size) -> bool override;
+  auto Next(std::vector<Tuple> *tuple_batch, std::vector<RID> *rid_batch, size_t batch_size) -> bool override;
 
   /** @return The output schema for the update */
-  auto GetOutputSchema() const -> const Schema & override {
-    return plan_->OutputSchema();
-  }
+  auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); }
 
  private:
   /** Update plan */

@@ -62,7 +62,7 @@ class BPlusTreeInternalPage : public BPlusTreePage {
    */
   auto ValueIndex(const ValueType &value) const -> int;
   auto GetMinSize() const -> int { return (GetMaxSize() + 1) / 2; }
-  void SetValueAt(int index, const ValueType &value); // sets the value of a key at a given index
+  void SetValueAt(int index, const ValueType &value);  // sets the value of a key at a given index
 
   auto ValueAt(int index) const -> ValueType;
 

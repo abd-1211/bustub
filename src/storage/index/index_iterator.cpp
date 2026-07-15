@@ -34,7 +34,8 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 INDEXITERATOR_TYPE::IndexIterator() = default;
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-INDEXITERATOR_TYPE::IndexIterator(std::shared_ptr<TracedBufferPoolManager> bpm,ReadPageGuard leaf_guard, int curr_idx): bpm_(std::move(bpm)), leaf_guard_(std::move(leaf_guard)), curr_idx_(curr_idx) {
+INDEXITERATOR_TYPE::IndexIterator(std::shared_ptr<TracedBufferPoolManager> bpm, ReadPageGuard leaf_guard, int curr_idx)
+    : bpm_(std::move(bpm)), leaf_guard_(std::move(leaf_guard)), curr_idx_(curr_idx) {
   SkipTombstones();
 }
 
@@ -42,29 +43,29 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 INDEXITERATOR_TYPE::~IndexIterator() = default;  // NOLINT
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto INDEXITERATOR_TYPE::IsEnd() -> bool { 
+auto INDEXITERATOR_TYPE::IsEnd() -> bool {
   // UNIMPLEMENTED("TODO(P2): Add implementation.");
   return bpm_ == nullptr;
 }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto INDEXITERATOR_TYPE::operator*() -> std::pair<const KeyType &, const ValueType &> {
-  //UNIMPLEMENTED("TODO(P2): Add implementation.");
+  // UNIMPLEMENTED("TODO(P2): Add implementation.");
   auto leaf = leaf_guard_.As<BPlusTreeLeafPage<KeyType, ValueType, KeyComparator, NumTombs>>();
   curr_key_ = leaf->KeyAt(curr_idx_);
-  curr_val_= leaf->ValueAt(curr_idx_);
-  return {curr_key_,curr_val_};
+  curr_val_ = leaf->ValueAt(curr_idx_);
+  return {curr_key_, curr_val_};
 }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & { 
- //UNIMPLEMENTED("TODO(P2): Add implementation."); 
-  
+auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & {
+  // UNIMPLEMENTED("TODO(P2): Add implementation.");
+
   curr_idx_++;
-  
-  //tombstone check 
+
+  // tombstone check
   SkipTombstones();
-  
+
   return *this;
 }
 

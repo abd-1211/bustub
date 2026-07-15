@@ -69,17 +69,68 @@ class SimpleAggregationHashTable {
    */
   void CombineAggregateValues(AggregateValue *result, const AggregateValue &input) {
     for (uint32_t i = 0; i < agg_exprs_.size(); i++) {
+      Value &old_val = result->aggregates_[i];
+      const Value &new_val = input.aggregates_[i];
+
       switch (agg_types_[i]) {
         case AggregationType::CountStarAggregate:
+          old_val = old_val.Add(ValueFactory::GetIntegerValue(1));
+          break;
         case AggregationType::CountAggregate:
+          if(!new_val.IsNull())
+          {
+            if(old_val.IsNull())
+            {
+              old_val = ValueFactory::GetIntegerValue(1);
+            }
+            else 
+            {
+              old_val = old_val.Add(ValueFactory::GetIntegerValue(1));
+            }
+          }
+          break;
         case AggregationType::SumAggregate:
+          if(!new_val.IsNull())
+          {
+            if(old_val.IsNull())
+            {
+              old_val = new_val;
+            }
+            else
+            {
+              old_val = old_val.Add(new_val);
+            }
+          }
+          break;
         case AggregationType::MinAggregate:
+          if(!new_val.IsNull())
+          {
+            if(old_val.IsNull())
+            {
+              old_val = new_val;
+            }
+            else
+            {
+              old_val = old_val.Min(new_val);
+            }
+          }
         case AggregationType::MaxAggregate:
+          if(!new_val.IsNull())
+          {
+            if(old_val.IsNull())
+            {
+              old_val = new_val;
+            }
+            else
+            {
+              old_val = old_val.Max(new_val);
+            }
+          }
           break;
       }
     }
 
-    UNIMPLEMENTED("TODO(P3): Add implementation.");
+    //UNIMPLEMENTED("TODO(P3): Add implementation.");
   }
 
   /**
@@ -151,7 +202,6 @@ class AggregationExecutor : public AbstractExecutor {
  public:
   AggregationExecutor(ExecutorContext *exec_ctx, const AggregationPlanNode *plan,
                       std::unique_ptr<AbstractExecutor> &&child_executor);
-
   void Init() override;
 
   auto Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<bustub::RID> *rid_batch, size_t batch_size)
@@ -189,9 +239,11 @@ class AggregationExecutor : public AbstractExecutor {
   std::unique_ptr<AbstractExecutor> child_executor_;
 
   /** Simple aggregation hash table */
-  // TODO(Student): Uncomment SimpleAggregationHashTable aht_;
+  SimpleAggregationHashTable aht_;
 
   /** Simple aggregation hash table iterator */
-  // TODO(Student): Uncomment SimpleAggregationHashTable::Iterator aht_iterator_;
+  SimpleAggregationHashTable::Iterator aht_iterator_;
+
+  bool has_run{false};
 };
 }  // namespace bustub

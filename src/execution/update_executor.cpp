@@ -23,10 +23,8 @@ namespace bustub {
 /**
  * Construct a new UpdateExecutor instance.
  */
-UpdateExecutor::UpdateExecutor(
-    ExecutorContext *exec_ctx,
-    const UpdatePlanNode *plan,
-    std::unique_ptr<AbstractExecutor> &&child_executor)
+UpdateExecutor::UpdateExecutor(ExecutorContext *exec_ctx, const UpdatePlanNode *plan,
+                               std::unique_ptr<AbstractExecutor> &&child_executor)
     : AbstractExecutor(exec_ctx),
       plan_(plan),
       table_info_(exec_ctx->GetCatalog()->GetTable(plan->GetTableOid()).get()),
@@ -41,9 +39,7 @@ void UpdateExecutor::Init() {
 /**
  * Yield the number of rows updated.
  */
-auto UpdateExecutor::Next(std::vector<Tuple> *tuple_batch,
-                          std::vector<RID> *rid_batch,
-                          size_t batch_size) -> bool {
+auto UpdateExecutor::Next(std::vector<Tuple> *tuple_batch, std::vector<RID> *rid_batch, size_t batch_size) -> bool {
   if (has_executed_) {
     return false;
   }
@@ -69,9 +65,7 @@ auto UpdateExecutor::Next(std::vector<Tuple> *tuple_batch,
       values.reserve(plan_->target_expressions_.size());
 
       for (const auto &expr : plan_->target_expressions_) {
-        values.emplace_back(
-            expr->Evaluate(&old_tuple,
-                           child_executor_->GetOutputSchema()));
+        values.emplace_back(expr->Evaluate(&old_tuple, child_executor_->GetOutputSchema()));
       }
 
       old_tuples.push_back(old_tuple);
@@ -83,8 +77,7 @@ auto UpdateExecutor::Next(std::vector<Tuple> *tuple_batch,
     child_rids.clear();
   }
 
-  auto indexes =
-      exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
+  auto indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
 
   // -------------------------------
   // Phase 2: Delete all old tuples
@@ -97,15 +90,9 @@ auto UpdateExecutor::Next(std::vector<Tuple> *tuple_batch,
 
     for (const auto &index_info : indexes) {
       Tuple old_key =
-          old_tuples[i].KeyFromTuple(
-              table_info_->schema_,
-              index_info->key_schema_,
-              index_info->index_->GetKeyAttrs());
+          old_tuples[i].KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
 
-      index_info->index_->DeleteEntry(
-          old_key,
-          old_rids[i],
-          exec_ctx_->GetTransaction());
+      index_info->index_->DeleteEntry(old_key, old_rids[i], exec_ctx_->GetTransaction());
     }
   }
 
@@ -119,8 +106,7 @@ auto UpdateExecutor::Next(std::vector<Tuple> *tuple_batch,
     meta.ts_ = 0;
     meta.is_deleted_ = false;
 
-    auto rid_opt =
-        table_info_->table_->InsertTuple(meta, new_tuples[i]);
+    auto rid_opt = table_info_->table_->InsertTuple(meta, new_tuples[i]);
 
     if (!rid_opt.has_value()) {
       continue;
@@ -130,23 +116,15 @@ auto UpdateExecutor::Next(std::vector<Tuple> *tuple_batch,
 
     for (const auto &index_info : indexes) {
       Tuple new_key =
-          new_tuples[i].KeyFromTuple(
-              table_info_->schema_,
-              index_info->key_schema_,
-              index_info->index_->GetKeyAttrs());
+          new_tuples[i].KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
 
-      index_info->index_->InsertEntry(
-          new_key,
-          new_rid,
-          exec_ctx_->GetTransaction());
+      index_info->index_->InsertEntry(new_key, new_rid, exec_ctx_->GetTransaction());
     }
 
     updated_rows++;
   }
 
-  tuple_batch->emplace_back(
-      std::vector<Value>{Value(TypeId::INTEGER, updated_rows)},
-      &GetOutputSchema());
+  tuple_batch->emplace_back(std::vector<Value>{Value(TypeId::INTEGER, updated_rows)}, &GetOutputSchema());
 
   has_executed_ = true;
   return true;
