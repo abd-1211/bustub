@@ -48,22 +48,13 @@ NestedLoopJoinExecutor::NestedLoopJoinExecutor(ExecutorContext *exec_ctx, const 
 void NestedLoopJoinExecutor::Init() {
   // UNIMPLEMENTED("TODO(P3): Add implementation.");
   left_executor_->Init();
-  right_executor_->Init();
-
-  right_tuples_.clear();
-  std::vector<Tuple> batch;
-  std::vector<RID> rids;
-  while (right_executor_->Next(&batch, &rids, BUSTUB_BATCH_SIZE)) {
-    for (auto &tuple : batch) {
-      right_tuples_.push_back(tuple);
-    }
-  }
 
   left_idx_ = 0;
-  right_idx_ = 0;
-  left_matched_ = false;
   left_batch_.clear();
-  left_exhausted_ = false;
+  right_batch_.clear();
+  right_idx_ = 0;
+  right_needs_init_ = true;
+  left_matched_ = false;
 }
 
 auto NestedLoopJoinExecutor::BuildLeftJoinTuple(const Tuple &left_tuple) -> Tuple {
@@ -109,43 +100,54 @@ auto NestedLoopJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
   // UNIMPLEMENTED("TODO(P3): Add implementation.");
   tuple_batch->clear();
   rid_batch->clear();
+
   while (tuple_batch->size() < batch_size) {
-    if (left_idx_ >= left_batch_.size())  // new tuples needed current stored have been used
-    {
-      std::vector<Tuple> new_batch;
-      std::vector<RID> new_rids;
-      if (!left_executor_->Next(&new_batch, &new_rids, batch_size))  // if no next tuples are available table has ended
-      {
-        left_exhausted_ = true;
+    if (left_idx_ >= left_batch_.size()) {
+      std::vector<Tuple> new_left_batch;
+      std::vector<RID> new_left_rids;
+      if (!left_executor_->Next(&new_left_batch, &new_left_rids, batch_size)) {
         break;
       }
-      left_batch_ = std::move(new_batch);
+      left_batch_ = std::move(new_left_batch);
       left_idx_ = 0;
-      right_idx_ = 0;
-      left_matched_ = false;
     }
+
     const Tuple &left_tuple = left_batch_[left_idx_];
 
-    if (right_idx_ >= right_tuples_.size()) {
-      if (plan_->GetJoinType() == JoinType::LEFT && !left_matched_) {  // no match so emit left tuples with NULLs
-        tuple_batch->push_back(BuildLeftJoinTuple(left_tuple));
-        rid_batch->push_back(RID{});
-      }
-      left_idx_++;
+    if (right_needs_init_) {
+      right_executor_->Init();
+      right_batch_.clear();
       right_idx_ = 0;
       left_matched_ = false;
-      continue;
+      right_needs_init_ = false;
     }
 
-    const Tuple &right_tuple = right_tuples_[right_idx_++];
-    auto val = plan_->Predicate()->EvaluateJoin(&left_tuple, left_executor_->GetOutputSchema(), &right_tuple,
-                                                right_executor_->GetOutputSchema());
-    if (!val.IsNull() && val.GetAs<bool>()) {
+    if (right_idx_ >= right_batch_.size()) {
+      std::vector<Tuple> new_right_batch;
+      std::vector<RID> new_right_rids;
+      if (!right_executor_->Next(&new_right_batch, &new_right_rids, batch_size)) {
+        if (plan_->GetJoinType() == JoinType::LEFT && !left_matched_) {
+          tuple_batch->push_back(BuildLeftJoinTuple(left_tuple));
+          rid_batch->push_back(RID{});
+        }
+        left_idx_++;
+        right_needs_init_ = true;
+        continue;
+      }
+      right_batch_ = std::move(new_right_batch);
+      right_idx_ = 0;
+    }
+
+    const Tuple &right_tuple = right_batch_[right_idx_++];
+    auto value = plan_->Predicate()->EvaluateJoin(&left_tuple, left_executor_->GetOutputSchema(), &right_tuple,
+                                                    right_executor_->GetOutputSchema());
+    if (!value.IsNull() && value.GetAs<bool>()) {
       tuple_batch->push_back(BuildJoinTuple(left_tuple, right_tuple));
       rid_batch->push_back(RID{});
       left_matched_ = true;
     }
   }
+
   return !tuple_batch->empty();
 }
 

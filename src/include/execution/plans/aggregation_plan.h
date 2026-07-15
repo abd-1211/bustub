@@ -104,12 +104,20 @@ struct AggregateKey {
    */
   auto operator==(const AggregateKey &other) const -> bool {
     for (uint32_t i = 0; i < other.group_bys_.size(); i++) {
-      if (group_bys_[i].CompareEquals(other.group_bys_[i]) != CmpBool::CmpTrue) {
+      const auto &a = group_bys_[i];
+      const auto &b = other.group_bys_[i];
+      if (a.IsNull() && b.IsNull()) {
+        continue;  // treat NULLs as equal for GROUP BY purposes
+      }
+      if (a.IsNull() != b.IsNull()) {
+        return false;  // one is null, the other isn't -> different groups
+      }
+      if (a.CompareEquals(b) != CmpBool::CmpTrue) {
         return false;
       }
     }
-    return true;
-  }
+  return true;
+}
 };
 
 /** AggregateValue represents a value for each of the running aggregates */

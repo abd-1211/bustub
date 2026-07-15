@@ -114,6 +114,7 @@ class SimpleAggregationHashTable {
               old_val = old_val.Min(new_val);
             }
           }
+          break;
         case AggregationType::MaxAggregate:
           if(!new_val.IsNull())
           {
