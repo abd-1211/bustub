@@ -15,6 +15,7 @@
 #include <memory>
 #include <vector>
 
+#include "common/util/hash_util.h"
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/hash_join_plan.h"
@@ -22,6 +23,21 @@
 
 namespace bustub {
 
+struct HashJoinKey {
+  std::vector<Value> keys_;
+
+  auto operator==(const HashJoinKey &other) const -> bool {
+    for (uint32_t i = 0; i < keys_.size(); i++) {
+      if (keys_[i].IsNull() || other.keys_[i].IsNull()) {
+        return false;  // NULL never equals anything in a join key
+      }
+      if (keys_[i].CompareEquals(other.keys_[i]) != CmpBool::CmpTrue) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
 /**
  * HashJoinExecutor executes a nested-loop JOIN on two tables.
  */
@@ -41,6 +57,31 @@ class HashJoinExecutor : public AbstractExecutor {
  private:
   /** The HashJoin plan node to be executed. */
   const HashJoinPlanNode *plan_;
+  std::unique_ptr<AbstractExecutor> left_child_;
+  std::unique_ptr<AbstractExecutor> right_child_;
+
+  std::vector<Tuple> output_tuples_;
+  size_t output_idx_{0};
+
+  auto MakeLeftJoinKey(const Tuple *tuple) -> HashJoinKey;
+  auto MakeRightJoinKey(const Tuple *tuple) -> HashJoinKey;
+  auto BuildJoinTuple(const Tuple &left_tuple, const Tuple &right_tuple) -> Tuple;
+  auto BuildLeftJoinTuple(const Tuple &left_tuple) -> Tuple;
 };
 
 }  // namespace bustub
+
+namespace std {
+template <>
+struct hash<bustub::HashJoinKey> {
+  auto operator()(const bustub::HashJoinKey &key) const -> std::size_t {
+    size_t curr_hash = 0;
+    for (const auto &val : key.keys_) {
+      if (!val.IsNull()) {
+        curr_hash = bustub::HashUtil::CombineHashes(curr_hash, bustub::HashUtil::HashValue(&val));
+      }
+    }
+    return curr_hash;
+  }
+};
+}  // namespace std

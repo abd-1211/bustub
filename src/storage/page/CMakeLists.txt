@@ -7,6 +7,7 @@ add_library(
     hash_table_block_page.cpp
     hash_table_bucket_page.cpp
     hash_table_directory_page.cpp
+    intermediate_result_page.cpp
     extendible_htable_bucket_page.cpp
     extendible_htable_directory_page.cpp
     extendible_htable_header_page.cpp

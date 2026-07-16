@@ -29,11 +29,7 @@ void IndexScanExecutor::Init() {
   table_info_ = catalog->GetTable(plan_->table_oid_);
   index_info_ = catalog->GetIndex(plan_->GetIndexOid());
   Index *idx_ptr = index_info_->index_.get();
-std::cerr << "DEBUG: index_oid=" << plan_->GetIndexOid()
-          << " index_name=" << index_info_->name_
-          << " table_name=" << index_info_->table_name_
-          << " runtime_type=" << typeid(*idx_ptr).name()
-          << std::endl;
+
 
 tree_ = dynamic_cast<BPlusTreeIndexForTwoIntegerColumn *>(idx_ptr);
   BUSTUB_ASSERT(tree_ != nullptr, "IndexScanExecutor: expected BPlusTreeIndexForTwoIntegerColumn");
