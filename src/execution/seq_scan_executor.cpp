@@ -11,7 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "execution/executors/seq_scan_executor.h"
+
 #include "common/macros.h"
+#include "concurrency/transaction_manager.h"
+#include "execution/execution_common.h"
 
 namespace bustub {
 
@@ -40,21 +43,47 @@ void SeqScanExecutor::Init() {
  * @return `true` if a tuple was produced, `false` if there are no more tuples
  */
 auto SeqScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<bustub::RID> *rid_batch,
-                           size_t batch_size) -> bool {
-  // UNIMPLEMENTED("TODO(P3): Add implementation.");
+                            size_t batch_size) -> bool {
   tuple_batch->clear();
   rid_batch->clear();
+
+  auto *txn = exec_ctx_->GetTransaction();
+  auto *txn_mgr = exec_ctx_->GetTransactionManager();
+
   while (!table_iter_->IsEnd() && tuple_batch->size() < batch_size) {
     auto [meta, tuple] = table_iter_->GetTuple();
-    if (!meta.is_deleted_) {
+    auto rid = table_iter_->GetRID();
+
+    if (txn == nullptr || txn_mgr == nullptr) {
+      // Non-MVCC context (e.g. project 3 style execution): ignore undo logs and deletions.
       bool matches = true;
       if (plan_->filter_predicate_ != nullptr) {
         auto filter_val = plan_->filter_predicate_->Evaluate(&tuple, table_info_->schema_);
         matches = filter_val.GetAs<bool>();
       }
-      if (matches) {
+      if (matches && !meta.is_deleted_) {
         tuple_batch->push_back(tuple);
-        rid_batch->push_back(table_iter_->GetRID());
+        rid_batch->push_back(rid);
+      }
+      ++(*table_iter_);
+      continue;
+    }
+
+    auto undo_link = txn_mgr->GetUndoLink(rid);
+    auto undo_logs = CollectUndoLogs(rid, meta, tuple, undo_link, txn, txn_mgr);
+
+    if (undo_logs.has_value()) {
+      auto reconstructed = ReconstructTuple(&table_info_->schema_, tuple, meta, *undo_logs);
+      if (reconstructed.has_value()) {
+        bool matches = true;
+        if (plan_->filter_predicate_ != nullptr) {
+          auto filter_val = plan_->filter_predicate_->Evaluate(&*reconstructed, table_info_->schema_);
+          matches = filter_val.GetAs<bool>();
+        }
+        if (matches) {
+          tuple_batch->push_back(*reconstructed);
+          rid_batch->push_back(rid);
+        }
       }
     }
 

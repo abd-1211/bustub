@@ -51,8 +51,39 @@ auto GenerateSortKey(const Tuple &tuple, const std::vector<OrderBy> &order_bys, 
  * std::nullopt.
  */
 auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const TupleMeta &base_meta,
-                      const std::vector<UndoLog> &undo_logs) -> std::optional<Tuple> {
-  UNIMPLEMENTED("not implemented");
+                       const std::vector<UndoLog> &undo_logs) -> std::optional<Tuple> {
+  std::vector<Value> values;
+  values.reserve(schema->GetColumnCount());
+  for (uint32_t i = 0; i < schema->GetColumnCount(); i++) {
+    values.push_back(base_tuple.GetValue(schema, i));
+  }
+
+  bool deleted = base_meta.is_deleted_;
+  for (const auto &log : undo_logs) {
+    if (log.is_deleted_) {
+      deleted = true;
+      continue;
+    }
+    deleted = false;
+    std::vector<uint32_t> attrs;
+    attrs.reserve(schema->GetColumnCount());
+    for (uint32_t i = 0; i < schema->GetColumnCount(); i++) {
+      if (log.modified_fields_[i]) {
+        attrs.push_back(i);
+      }
+    }
+    auto partial = Schema::CopySchema(schema, attrs);
+    uint32_t j = 0;
+    for (uint32_t i : attrs) {
+      values[i] = log.tuple_.GetValue(&partial, j);
+      j++;
+    }
+  }
+
+  if (deleted) {
+    return std::nullopt;
+  }
+  return Tuple(values, schema);
 }
 
 /**
@@ -68,8 +99,40 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
  * time.
  */
 auto CollectUndoLogs(RID rid, const TupleMeta &base_meta, const Tuple &base_tuple, std::optional<UndoLink> undo_link,
-                     Transaction *txn, TransactionManager *txn_mgr) -> std::optional<std::vector<UndoLog>> {
-  UNIMPLEMENTED("not implemented");
+                      Transaction *txn, TransactionManager *txn_mgr) -> std::optional<std::vector<UndoLog>> {
+  (void)rid;
+  (void)base_tuple;
+
+  auto read_ts = txn->GetReadTs();
+
+  // Case 3 sub-case: the base tuple was most recently modified by the current (uncommitted) transaction.
+  // We always see our own latest writes, so no undo logs are needed.
+  if (base_meta.ts_ == txn->GetTransactionTempTs()) {
+    return std::vector<UndoLog>{};
+  }
+
+  std::vector<UndoLog> logs;
+  timestamp_t current_ts = base_meta.ts_;
+  auto cur = undo_link;
+  while (current_ts > read_ts) {
+    if (!cur.has_value() || !cur->IsValid()) {
+      break;
+    }
+    auto log = txn_mgr->GetUndoLogOptional(*cur);
+    if (!log.has_value()) {
+      break;
+    }
+    logs.push_back(*log);
+    current_ts = log->ts_;
+    cur = log->prev_version_;
+  }
+
+  // If we ran out of history while the version is still newer than our read timestamp, the tuple did not
+  // exist (or was not yet visible) at our read timestamp.
+  if (current_ts > read_ts) {
+    return std::nullopt;
+  }
+  return logs;
 }
 
 /**
@@ -104,29 +167,39 @@ auto GenerateUpdatedUndoLog(const Schema *schema, const Tuple *base_tuple, const
 }
 
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
-               TableHeap *table_heap) {
-  // always use stderr for printing logs...
+                TableHeap *table_heap) {
+  auto format_ts = [](timestamp_t ts) -> std::string {
+    if (ts & TXN_START_ID) {
+      return fmt::format("txn{}", ts ^ TXN_START_ID);
+    }
+    return std::to_string(ts);
+  };
+
   fmt::println(stderr, "debug_hook: {}", info);
+  auto iter = table_heap->MakeIterator();
+  while (!iter.IsEnd()) {
+    auto [meta, tuple] = iter.GetTuple();
+    auto rid = iter.GetRID();
+    fmt::println(stderr, "RID={}/{} ts={} {}tuple={}", rid.GetPageId(), rid.GetSlotNum(), format_ts(meta.ts_),
+                 meta.is_deleted_ ? "<del marker> " : "", tuple.ToString(&table_info->schema_));
 
-  fmt::println(
-      stderr,
-      "You see this line of text because you have not implemented `TxnMgrDbg`. You should do this once you have "
-      "finished task 2. Implementing this helper function will save you a lot of time for debugging in later tasks.");
-
-  // We recommend implementing this function as traversing the table heap and print the version chain. An example output
-  // of our reference solution:
-  //
-  // debug_hook: before verify scan
-  // RID=0/0 ts=txn8 tuple=(1, <NULL>, <NULL>)
-  //   txn8@0 (2, _, _) ts=1
-  // RID=0/1 ts=3 tuple=(3, <NULL>, <NULL>)
-  //   txn5@0 <del> ts=2
-  //   txn3@0 (4, <NULL>, <NULL>) ts=1
-  // RID=0/2 ts=4 <del marker> tuple=(<NULL>, <NULL>, <NULL>)
-  //   txn7@0 (5, <NULL>, <NULL>) ts=3
-  // RID=0/3 ts=txn6 <del marker> tuple=(<NULL>, <NULL>, <NULL>)
-  //   txn6@0 (6, <NULL>, <NULL>) ts=2
-  //   txn3@1 (7, _, _) ts=1
+    auto undo_link = txn_mgr->GetUndoLink(rid);
+    while (undo_link.has_value() && undo_link->IsValid()) {
+      auto log = txn_mgr->GetUndoLog(*undo_link);
+      std::vector<uint32_t> attrs;
+      for (uint32_t i = 0; i < table_info->schema_.GetColumnCount(); i++) {
+        if (log.modified_fields_[i]) {
+          attrs.push_back(i);
+        }
+      }
+      auto partial = Schema::CopySchema(&table_info->schema_, attrs);
+      fmt::println(stderr, "  txn{}@{} {}ts={}", undo_link->prev_txn_ ^ TXN_START_ID, undo_link->prev_log_idx_,
+                   log.is_deleted_ ? "<del> " : "", format_ts(log.ts_));
+      fmt::println(stderr, "    {}", log.tuple_.ToString(&partial));
+      undo_link = log.prev_version_;
+    }
+    ++iter;
+  }
 }
 
 }  // namespace bustub
