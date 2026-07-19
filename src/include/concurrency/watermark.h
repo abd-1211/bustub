@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <set>
 #include <unordered_map>
 
 #include "concurrency/transaction.h"
@@ -47,6 +48,9 @@ class Watermark {
   timestamp_t watermark_;
 
   std::unordered_map<timestamp_t, int> current_reads_;
+
+  /** Keeps all running read timestamps in sorted order so the minimum (watermark) can be found in O(log N). */
+  std::multiset<timestamp_t> reads_by_ts_;
 };
 
 };  // namespace bustub
