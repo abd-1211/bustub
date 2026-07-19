@@ -148,7 +148,47 @@ auto CollectUndoLogs(RID rid, const TupleMeta &base_meta, const Tuple &base_tupl
  */
 auto GenerateNewUndoLog(const Schema *schema, const Tuple *base_tuple, const Tuple *target_tuple, timestamp_t ts,
                         UndoLink prev_version) -> UndoLog {
-  UNIMPLEMENTED("not implemented");
+  auto col_count = schema->GetColumnCount();
+
+  // Insert case: base_tuple is nullptr, meaning the tuple didn't exist before.
+  // The undo log should indicate "this tuple was deleted (didn't exist)" before the insert.
+  if (base_tuple == nullptr) {
+    return UndoLog{true, std::vector<bool>(col_count, false), Tuple{}, ts, prev_version};
+  }
+
+  // Delete case: target_tuple is nullptr, meaning we're deleting the tuple.
+  // Store the full base tuple so we can reconstruct it.
+  if (target_tuple == nullptr) {
+    std::vector<bool> modified_fields(col_count, true);
+    std::vector<Value> values;
+    values.reserve(col_count);
+    for (uint32_t i = 0; i < col_count; i++) {
+      values.push_back(base_tuple->GetValue(schema, i));
+    }
+    std::vector<uint32_t> attrs;
+    attrs.reserve(col_count);
+    for (uint32_t i = 0; i < col_count; i++) {
+      attrs.push_back(i);
+    }
+    auto partial_schema = Schema::CopySchema(schema, attrs);
+    return UndoLog{false, modified_fields, Tuple{values, &partial_schema}, ts, prev_version};
+  }
+
+  // Update case: compare columns and build a partial undo log with changed columns.
+  std::vector<bool> modified_fields(col_count, false);
+  std::vector<uint32_t> attrs;
+  std::vector<Value> values;
+  for (uint32_t i = 0; i < col_count; i++) {
+    auto base_val = base_tuple->GetValue(schema, i);
+    auto target_val = target_tuple->GetValue(schema, i);
+    if (!base_val.CompareExactlyEquals(target_val)) {
+      modified_fields[i] = true;
+      attrs.push_back(i);
+      values.push_back(base_val);
+    }
+  }
+  auto partial_schema = Schema::CopySchema(schema, attrs);
+  return UndoLog{false, modified_fields, Tuple{values, &partial_schema}, ts, prev_version};
 }
 
 /**
@@ -163,7 +203,114 @@ auto GenerateNewUndoLog(const Schema *schema, const Tuple *base_tuple, const Tup
  */
 auto GenerateUpdatedUndoLog(const Schema *schema, const Tuple *base_tuple, const Tuple *target_tuple,
                             const UndoLog &log) -> UndoLog {
-  UNIMPLEMENTED("not implemented");
+  auto col_count = schema->GetColumnCount();
+
+  // If this is a delete (target_tuple == nullptr), the undo log must capture the full
+  // pre-transaction state. We need to store ALL columns. For columns that were already
+  // tracked in the existing undo log, use those original values. For columns NOT in the
+  // existing log, use the current base_tuple values (which this txn has been modifying).
+  if (target_tuple == nullptr) {
+    // If the original undo log was already a deletion marker (i.e., we inserted then delete),
+    // just keep it as a deletion marker.
+    if (log.is_deleted_) {
+      return UndoLog{true, log.modified_fields_, log.tuple_, log.ts_, log.prev_version_};
+    }
+
+    std::vector<bool> modified_fields(col_count, true);
+    std::vector<Value> values;
+    values.reserve(col_count);
+
+    // Build partial schema for existing log to extract its values
+    std::vector<uint32_t> old_attrs;
+    for (uint32_t i = 0; i < col_count; i++) {
+      if (log.modified_fields_[i]) {
+        old_attrs.push_back(i);
+      }
+    }
+    auto old_partial_schema = Schema::CopySchema(schema, old_attrs);
+
+    uint32_t old_j = 0;
+    for (uint32_t i = 0; i < col_count; i++) {
+      if (log.modified_fields_[i]) {
+        // Use the value from the existing undo log (the original pre-txn value)
+        values.push_back(log.tuple_.GetValue(&old_partial_schema, old_j));
+        old_j++;
+      } else {
+        // This column was not tracked yet. The base_tuple has our latest in-txn value,
+        // which for unmodified columns IS the original value.
+        BUSTUB_ASSERT(base_tuple != nullptr, "base_tuple should not be null for delete on modified tuple");
+        values.push_back(base_tuple->GetValue(schema, i));
+      }
+    }
+
+    std::vector<uint32_t> all_attrs;
+    all_attrs.reserve(col_count);
+    for (uint32_t i = 0; i < col_count; i++) {
+      all_attrs.push_back(i);
+    }
+    auto full_schema = Schema::CopySchema(schema, all_attrs);
+    return UndoLog{false, modified_fields, Tuple{values, &full_schema}, log.ts_, log.prev_version_};
+  }
+
+  // If this is an insert (base_tuple == nullptr, i.e. we're updating something we deleted,
+  // which means "delete then insert" = the tuple existed before, we deleted it, now re-inserting).
+  // The undo log should still record the original pre-txn state from the existing log.
+  if (base_tuple == nullptr) {
+    // We're inserting on top of a deletion. The existing log has the original data.
+    // Just keep the existing log as-is (it already records the pre-txn state).
+    return UndoLog{log.is_deleted_, log.modified_fields_, log.tuple_, log.ts_, log.prev_version_};
+  }
+
+  // Update case: merge new column changes into the existing undo log.
+  // For columns changed by the new update: keep the ORIGINAL value from the existing log
+  // (or from the base_tuple if not yet tracked).
+  // For columns already in the existing log but NOT changed now: keep as-is.
+
+  // Build partial schema for existing log
+  std::vector<uint32_t> old_attrs;
+  for (uint32_t i = 0; i < col_count; i++) {
+    if (log.modified_fields_[i]) {
+      old_attrs.push_back(i);
+    }
+  }
+  auto old_partial_schema = Schema::CopySchema(schema, old_attrs);
+
+  // Determine which columns are modified in the new update
+  std::vector<bool> new_modified(col_count, false);
+  for (uint32_t i = 0; i < col_count; i++) {
+    auto base_val = base_tuple->GetValue(schema, i);
+    auto target_val = target_tuple->GetValue(schema, i);
+    if (!base_val.CompareExactlyEquals(target_val)) {
+      new_modified[i] = true;
+    }
+  }
+
+  // Merge: union of old and new modified fields
+  std::vector<bool> merged_modified(col_count, false);
+  std::vector<uint32_t> merged_attrs;
+  std::vector<Value> merged_values;
+
+  uint32_t old_j = 0;
+  for (uint32_t i = 0; i < col_count; i++) {
+    if (log.modified_fields_[i] || new_modified[i]) {
+      merged_modified[i] = true;
+      merged_attrs.push_back(i);
+      if (log.modified_fields_[i]) {
+        // Already tracked in existing log — use the original value from the log
+        merged_values.push_back(log.tuple_.GetValue(&old_partial_schema, old_j));
+      } else {
+        // Newly modified — the base_tuple's current value IS the pre-update value for this txn step,
+        // but since this column wasn't changed before in this txn, it's also the original value.
+        merged_values.push_back(base_tuple->GetValue(schema, i));
+      }
+    }
+    if (log.modified_fields_[i]) {
+      old_j++;
+    }
+  }
+
+  auto merged_schema = Schema::CopySchema(schema, merged_attrs);
+  return UndoLog{log.is_deleted_, merged_modified, Tuple{merged_values, &merged_schema}, log.ts_, log.prev_version_};
 }
 
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
@@ -185,7 +332,11 @@ void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const Table
 
     auto undo_link = txn_mgr->GetUndoLink(rid);
     while (undo_link.has_value() && undo_link->IsValid()) {
-      auto log = txn_mgr->GetUndoLog(*undo_link);
+      auto log_opt = txn_mgr->GetUndoLogOptional(*undo_link);
+      if (!log_opt.has_value()) {
+        break;
+      }
+      auto log = *log_opt;
       std::vector<uint32_t> attrs;
       for (uint32_t i = 0; i < table_info->schema_.GetColumnCount(); i++) {
         if (log.modified_fields_[i]) {

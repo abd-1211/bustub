@@ -58,12 +58,19 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
   std::vector<bustub::Tuple> child_tuples;
   std::vector<bustub::RID> child_rids;
 
+  auto *txn = exec_ctx_->GetTransaction();
+
   uint32_t inserted_rows = 0;
   while (child_executor_->Next(&child_tuples, &child_rids, batch_size)) {
     for (const auto &tuple : child_tuples) {
-      auto inserted_rid = table_info_->table_->InsertTuple(TupleMeta{0, false}, tuple, exec_ctx_->GetLockManager(),
+      // Use the transaction's temporary timestamp for MVCC
+      auto temp_ts = txn->GetTransactionTempTs();
+      auto inserted_rid = table_info_->table_->InsertTuple(TupleMeta{temp_ts, false}, tuple, exec_ctx_->GetLockManager(),
                                                            exec_ctx_->GetTransaction(), table_info_->oid_);
       BUSTUB_ENSURE(inserted_rid.has_value(), "InsertExecutor: failed to insert tuple into table heap");
+
+      // Track the RID in the write set so Commit can finalize timestamps
+      txn->AppendWriteSet(table_info_->oid_, inserted_rid.value());
 
       for (const auto &index_info : exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_)) {
         auto *index_meta = index_info->index_->GetMetadata();
