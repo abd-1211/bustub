@@ -86,59 +86,197 @@ auto UpdateExecutor::Next(std::vector<Tuple> *tuple_batch, std::vector<RID> *rid
   int32_t updated_rows = 0;
   auto temp_ts = txn->GetTransactionTempTs();
 
-  for (auto &[old_tuple, rid, new_tuple] : entries) {
-    // Get the current base tuple metadata
-    auto base_meta = table_info_->table_->GetTupleMeta(rid);
+  // Check for primary key index
+  IndexInfo *primary_key_index = nullptr;
+  for (const auto &index_info : exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_)) {
+    if (index_info->is_primary_key_) {
+      primary_key_index = index_info.get();
+      break;
+    }
+  }
 
-    // Check for write-write conflict
-    if (base_meta.ts_ != temp_ts) {
-      // Not our own modification — check for conflicts
-      if (base_meta.ts_ >= TXN_START_ID) {
-        // Another uncommitted transaction owns this tuple
-        txn->SetTainted();
-        throw ExecutionException("write-write conflict: tuple owned by another uncommitted txn");
-      }
-      if (base_meta.ts_ > txn->GetReadTs()) {
-        // Tuple was committed after our read timestamp
-        txn->SetTainted();
-        throw ExecutionException("write-write conflict: tuple committed after our read_ts");
+  std::vector<bool> is_pk_updated_vec(entries.size(), false);
+  for (size_t i = 0; i < entries.size(); i++) {
+    auto &[old_tuple, rid, new_tuple] = entries[i];
+    if (primary_key_index != nullptr) {
+      auto *index_meta = primary_key_index->index_->GetMetadata();
+      auto old_key = old_tuple.KeyFromTuple(schema, *index_meta->GetKeySchema(), index_meta->GetKeyAttrs());
+      auto new_key = new_tuple.KeyFromTuple(schema, *index_meta->GetKeySchema(), index_meta->GetKeyAttrs());
+      
+      for (uint32_t j = 0; j < index_meta->GetKeyAttrs().size(); j++) {
+        if (old_key.GetValue(index_meta->GetKeySchema(), j).CompareEquals(new_key.GetValue(index_meta->GetKeySchema(), j)) != CmpBool::CmpTrue) {
+          is_pk_updated_vec[i] = true;
+          break;
+        }
       }
     }
 
-    // Self-modification: the current txn already modified this tuple
-    if (base_meta.ts_ == temp_ts) {
-      // Check if this tuple has an undo log from this transaction
-      auto undo_link = txn_mgr->GetUndoLink(rid);
-      if (undo_link.has_value() && undo_link->IsValid() && undo_link->prev_txn_ == txn->GetTransactionId()) {
-        // Has existing undo log — update it via GenerateUpdatedUndoLog
-        auto [base_tuple_heap, base_tuple_data] = table_info_->table_->GetTuple(rid);
-        auto existing_log = txn->GetUndoLog(undo_link->prev_log_idx_);
-        auto updated_log = GenerateUpdatedUndoLog(&schema, &base_tuple_data, &new_tuple, existing_log);
-        txn->ModifyUndoLog(undo_link->prev_log_idx_, updated_log);
-      }
-      // else: self-inserted tuple (no undo log needed), just update in-place
+    if (is_pk_updated_vec[i]) {
+      // Primary key update: 1. Delete old tuple
+      bool del_success = false;
+      while (!del_success) {
+        auto tuple_link = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
+        auto base_meta = std::get<0>(tuple_link);
+        auto base_tuple = std::get<1>(tuple_link);
+        auto curr_link = std::get<2>(tuple_link);
 
-      // Update the tuple in the table heap in-place
-      table_info_->table_->UpdateTupleInPlace(TupleMeta{temp_ts, false}, new_tuple, rid, nullptr);
+        if (base_meta.ts_ != temp_ts) {
+          if (base_meta.ts_ >= TXN_START_ID) {
+            txn->SetTainted();
+            throw ExecutionException("write-write conflict: tuple owned by another uncommitted txn");
+          }
+          if (base_meta.ts_ > txn->GetReadTs()) {
+            txn->SetTainted();
+            throw ExecutionException("write-write conflict: tuple committed after our read_ts");
+          }
+        }
+
+        std::optional<UndoLink> next_undo_link;
+        if (base_meta.ts_ == temp_ts) {
+          if (curr_link.has_value() && curr_link->IsValid() && curr_link->prev_txn_ == txn->GetTransactionId()) {
+            auto existing_log = txn->GetUndoLog(curr_link->prev_log_idx_);
+            auto updated_log = GenerateUpdatedUndoLog(&schema, &base_tuple, nullptr, existing_log);
+            txn->ModifyUndoLog(curr_link->prev_log_idx_, updated_log);
+          }
+          next_undo_link = curr_link;
+        } else {
+          auto undo_log = GenerateNewUndoLog(&schema, &base_tuple, nullptr, base_meta.ts_, curr_link.has_value() ? *curr_link : UndoLink{});
+          next_undo_link = txn->AppendUndoLog(undo_log);
+        }
+
+        del_success = UpdateTupleAndUndoLink(txn_mgr, rid, next_undo_link, table_info_->table_.get(), txn, TupleMeta{temp_ts, true}, base_tuple,
+          [txn_mgr, base_meta, curr_link](const TupleMeta &m, const Tuple &t, RID r, std::optional<UndoLink> /*l*/) {
+            return m == base_meta && txn_mgr->GetUndoLink(r) == curr_link;
+          });
+      }
+      txn->AppendWriteSet(table_info_->oid_, rid);
+    }
+  }
+
+  for (size_t i = 0; i < entries.size(); i++) {
+    auto &[old_tuple, rid, new_tuple] = entries[i];
+    
+    if (!is_pk_updated_vec[i]) {
+      // Normal in-place update using CAS
+      bool success = false;
+      while (!success) {
+        auto tuple_link = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
+        auto base_meta = std::get<0>(tuple_link);
+        auto base_tuple = std::get<1>(tuple_link);
+        auto curr_link = std::get<2>(tuple_link);
+
+        if (base_meta.ts_ != temp_ts) {
+          if (base_meta.ts_ >= TXN_START_ID) {
+            txn->SetTainted();
+            throw ExecutionException("write-write conflict: tuple owned by another uncommitted txn");
+          }
+          if (base_meta.ts_ > txn->GetReadTs()) {
+            txn->SetTainted();
+            throw ExecutionException("write-write conflict: tuple committed after our read_ts");
+          }
+        }
+
+        std::optional<UndoLink> next_undo_link;
+        if (base_meta.ts_ == temp_ts) {
+          if (curr_link.has_value() && curr_link->IsValid() && curr_link->prev_txn_ == txn->GetTransactionId()) {
+            auto existing_log = txn->GetUndoLog(curr_link->prev_log_idx_);
+            auto updated_log = GenerateUpdatedUndoLog(&schema, &base_tuple, &new_tuple, existing_log);
+            txn->ModifyUndoLog(curr_link->prev_log_idx_, updated_log);
+          }
+          next_undo_link = curr_link;
+        } else {
+          auto undo_log = GenerateNewUndoLog(&schema, &base_tuple, &new_tuple, base_meta.ts_, curr_link.has_value() ? *curr_link : UndoLink{});
+          next_undo_link = txn->AppendUndoLog(undo_log);
+        }
+
+        success = UpdateTupleAndUndoLink(txn_mgr, rid, next_undo_link, table_info_->table_.get(), txn, TupleMeta{temp_ts, false}, new_tuple,
+          [txn_mgr, base_meta, curr_link](const TupleMeta &m, const Tuple &t, RID r, std::optional<UndoLink> /*l*/) {
+            return m == base_meta && txn_mgr->GetUndoLink(r) == curr_link;
+          });
+      }
+
+      txn->AppendWriteSet(table_info_->oid_, rid);
+      updated_rows++;
     } else {
-      // First modification by this txn — create a new undo log
-      auto [base_tuple_heap_meta, base_tuple_data] = table_info_->table_->GetTuple(rid);
-      auto prev_link = txn_mgr->GetUndoLink(rid);
-      auto prev_undo_link = prev_link.has_value() ? *prev_link : UndoLink{};
+      // Primary key update: 2. Insert new tuple
+      bool inserted_via_update = false;
+      auto *index_meta = primary_key_index->index_->GetMetadata();
+      auto key = new_tuple.KeyFromTuple(schema, *index_meta->GetKeySchema(), index_meta->GetKeyAttrs());
 
-      auto undo_log = GenerateNewUndoLog(&schema, &base_tuple_data, &new_tuple, base_meta.ts_, prev_undo_link);
-      auto new_undo_link = txn->AppendUndoLog(undo_log);
+      std::vector<RID> result;
+      primary_key_index->index_->ScanKey(key, &result, txn);
 
-      // Update the undo link to point to our new undo log
-      txn_mgr->UpdateUndoLink(rid, new_undo_link);
+      if (!result.empty()) {
+        RID existing_rid = result[0];
+        auto tuple_link = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), existing_rid);
+        auto base_meta = std::get<0>(tuple_link);
 
-      // Update the tuple in the table heap in-place
-      table_info_->table_->UpdateTupleInPlace(TupleMeta{temp_ts, false}, new_tuple, rid, nullptr);
+        if (!base_meta.is_deleted_) {
+          txn->SetTainted();
+          throw ExecutionException("duplicate key violation: primary key already exists");
+        }
+
+        bool ins_success = false;
+        while (!ins_success) {
+          auto curr_tuple_link = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), existing_rid);
+          auto curr_meta = std::get<0>(curr_tuple_link);
+          auto curr_link = std::get<2>(curr_tuple_link);
+
+          if (!curr_meta.is_deleted_) {
+            txn->SetTainted();
+            throw ExecutionException("duplicate key violation during CAS update");
+          }
+
+          if (curr_meta.ts_ != temp_ts) {
+            if (curr_meta.ts_ >= TXN_START_ID) {
+              txn->SetTainted();
+              throw ExecutionException("write-write conflict during insert into deleted RID");
+            }
+            if (curr_meta.ts_ > txn->GetReadTs()) {
+              txn->SetTainted();
+              throw ExecutionException("write-write conflict during insert into deleted RID");
+            }
+          }
+
+          std::optional<UndoLink> next_undo_link;
+          if (curr_meta.ts_ == temp_ts) {
+            if (curr_link.has_value() && curr_link->IsValid() && curr_link->prev_txn_ == txn->GetTransactionId()) {
+              auto existing_log = txn->GetUndoLog(curr_link->prev_log_idx_);
+              auto updated_log = GenerateUpdatedUndoLog(&schema, nullptr, &new_tuple, existing_log);
+              txn->ModifyUndoLog(curr_link->prev_log_idx_, updated_log);
+            }
+            next_undo_link = curr_link;
+          } else {
+            auto undo_log = UndoLog{true, std::vector<bool>(schema.GetColumnCount(), false), Tuple{}, curr_meta.ts_, curr_link.has_value() ? *curr_link : UndoLink{}};
+            next_undo_link = txn->AppendUndoLog(undo_log);
+          }
+
+          ins_success = UpdateTupleAndUndoLink(txn_mgr, existing_rid, next_undo_link, table_info_->table_.get(), txn, TupleMeta{temp_ts, false}, new_tuple,
+            [txn_mgr, curr_meta, curr_link](const TupleMeta &m, const Tuple &t, RID r, std::optional<UndoLink> /*l*/) {
+              return m == curr_meta && txn_mgr->GetUndoLink(r) == curr_link;
+            });
+        }
+        txn->AppendWriteSet(table_info_->oid_, existing_rid);
+        inserted_via_update = true;
+      }
+
+      if (!inserted_via_update) {
+        auto inserted_rid = table_info_->table_->InsertTuple(TupleMeta{temp_ts, false}, new_tuple, exec_ctx_->GetLockManager(), txn, table_info_->oid_);
+        BUSTUB_ENSURE(inserted_rid.has_value(), "UpdateExecutor: failed to insert new tuple");
+        txn->AppendWriteSet(table_info_->oid_, inserted_rid.value());
+
+        for (const auto &index_info : exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_)) {
+          auto *idx_meta = index_info->index_->GetMetadata();
+          auto idx_key = new_tuple.KeyFromTuple(schema, *idx_meta->GetKeySchema(), idx_meta->GetKeyAttrs());
+          if (!index_info->index_->InsertEntry(idx_key, inserted_rid.value(), txn)) {
+            txn->SetTainted();
+            throw ExecutionException("duplicate key violation during index insertion");
+          }
+        }
+      }
+
+      updated_rows++;
     }
-
-    // Track in write set
-    txn->AppendWriteSet(table_info_->oid_, rid);
-    updated_rows++;
   }
 
   tuple_batch->emplace_back(std::vector<Value>{Value(TypeId::INTEGER, updated_rows)}, &GetOutputSchema());

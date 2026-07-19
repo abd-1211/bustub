@@ -64,57 +64,43 @@ auto DeleteExecutor::Next(std::vector<Tuple> *tuple_batch, std::vector<RID> *rid
     for (size_t i = 0; i < child_tuples.size(); i++) {
       const RID &rid = child_rids[i];
 
-      // Get current base tuple metadata
-      auto base_meta = table_info_->table_->GetTupleMeta(rid);
+      bool success = false;
+      while (!success) {
+        auto tuple_link = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
+        auto base_meta = std::get<0>(tuple_link);
+        auto base_tuple = std::get<1>(tuple_link);
+        auto curr_link = std::get<2>(tuple_link);
 
-      // Check for write-write conflict
-      if (base_meta.ts_ != temp_ts) {
-        // Not our own modification — check for conflicts
-        if (base_meta.ts_ >= TXN_START_ID) {
-          // Another uncommitted transaction owns this tuple
-          txn->SetTainted();
-          throw ExecutionException("write-write conflict: tuple owned by another uncommitted txn");
+        if (base_meta.ts_ != temp_ts) {
+          if (base_meta.ts_ >= TXN_START_ID) {
+            txn->SetTainted();
+            throw ExecutionException("write-write conflict: tuple owned by another uncommitted txn");
+          }
+          if (base_meta.ts_ > txn->GetReadTs()) {
+            txn->SetTainted();
+            throw ExecutionException("write-write conflict: tuple committed after our read_ts");
+          }
         }
-        if (base_meta.ts_ > txn->GetReadTs()) {
-          // Tuple was committed after our read timestamp
-          txn->SetTainted();
-          throw ExecutionException("write-write conflict: tuple committed after our read_ts");
+
+        std::optional<UndoLink> next_undo_link;
+        if (base_meta.ts_ == temp_ts) {
+          if (curr_link.has_value() && curr_link->IsValid() && curr_link->prev_txn_ == txn->GetTransactionId()) {
+            auto existing_log = txn->GetUndoLog(curr_link->prev_log_idx_);
+            auto updated_log = GenerateUpdatedUndoLog(&schema, &base_tuple, nullptr, existing_log);
+            txn->ModifyUndoLog(curr_link->prev_log_idx_, updated_log);
+          }
+          next_undo_link = curr_link;
+        } else {
+          auto undo_log = GenerateNewUndoLog(&schema, &base_tuple, nullptr, base_meta.ts_, curr_link.has_value() ? *curr_link : UndoLink{});
+          next_undo_link = txn->AppendUndoLog(undo_log);
         }
+
+        success = UpdateTupleAndUndoLink(txn_mgr, rid, next_undo_link, table_info_->table_.get(), txn, TupleMeta{temp_ts, true}, base_tuple,
+          [txn_mgr, base_meta, curr_link](const TupleMeta &m, const Tuple &t, RID r, std::optional<UndoLink> /*l*/) {
+            return m == base_meta && txn_mgr->GetUndoLink(r) == curr_link;
+          });
       }
 
-      // Self-modification: the current txn already modified this tuple
-      if (base_meta.ts_ == temp_ts) {
-        // Check if this tuple has an undo log from this transaction
-        auto undo_link = txn_mgr->GetUndoLink(rid);
-        if (undo_link.has_value() && undo_link->IsValid() && undo_link->prev_txn_ == txn->GetTransactionId()) {
-          // Has existing undo log — update it to account for the delete
-          auto [heap_meta, heap_tuple] = table_info_->table_->GetTuple(rid);
-          auto existing_log = txn->GetUndoLog(undo_link->prev_log_idx_);
-          auto updated_log = GenerateUpdatedUndoLog(&schema, &heap_tuple, nullptr, existing_log);
-          txn->ModifyUndoLog(undo_link->prev_log_idx_, updated_log);
-        }
-        // else: self-inserted tuple (no undo log needed), just mark deleted
-
-        // Mark the tuple as deleted in-place
-        table_info_->table_->UpdateTupleMeta(TupleMeta{temp_ts, true}, rid);
-      } else {
-        // First modification by this txn — create a new undo log
-        auto [heap_meta, heap_tuple] = table_info_->table_->GetTuple(rid);
-        auto prev_link = txn_mgr->GetUndoLink(rid);
-        auto prev_undo_link = prev_link.has_value() ? *prev_link : UndoLink{};
-
-        // For delete: base_tuple is the current tuple, target is nullptr
-        auto undo_log = GenerateNewUndoLog(&schema, &heap_tuple, nullptr, base_meta.ts_, prev_undo_link);
-        auto new_undo_link = txn->AppendUndoLog(undo_log);
-
-        // Update the undo link to point to our new undo log
-        txn_mgr->UpdateUndoLink(rid, new_undo_link);
-
-        // Mark the tuple as deleted
-        table_info_->table_->UpdateTupleMeta(TupleMeta{temp_ts, true}, rid);
-      }
-
-      // Track in write set
       txn->AppendWriteSet(table_info_->oid_, rid);
       deleted_rows++;
     }

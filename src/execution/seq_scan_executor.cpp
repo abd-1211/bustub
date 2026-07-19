@@ -15,6 +15,8 @@
 #include "common/macros.h"
 #include "concurrency/transaction_manager.h"
 #include "execution/execution_common.h"
+#include "execution/expressions/constant_value_expression.h"
+#include "type/value_factory.h"
 
 namespace bustub {
 
@@ -31,8 +33,16 @@ SeqScanExecutor::SeqScanExecutor(ExecutorContext *exec_ctx, const SeqScanPlanNod
 
 /** Initialize the sequential scan */
 void SeqScanExecutor::Init() {
-  // UNIMPLEMENTED("TODO(P3): Add implementation.");
   table_iter_.emplace(table_info_->table_->MakeIterator());
+  
+  auto *txn = exec_ctx_->GetTransaction();
+  if (txn != nullptr && txn->GetIsolationLevel() == IsolationLevel::SERIALIZABLE) {
+    if (plan_->filter_predicate_ != nullptr) {
+      txn->AppendScanPredicate(table_info_->oid_, plan_->filter_predicate_);
+    } else {
+      txn->AppendScanPredicate(table_info_->oid_, std::make_shared<ConstantValueExpression>(ValueFactory::GetBooleanValue(true)));
+    }
+  }
 }
 
 /**
