@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <vector>
 
@@ -60,6 +61,48 @@ namespace bustub {
  * UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING when there is no ORDER BY clause.
  *
  */
+
+ struct WindowPartitionKey {
+  std::vector<Value> keys_;
+
+  auto operator==(const WindowPartitionKey &other) const -> bool {
+    for (uint32_t i = 0; i < keys_.size(); i++) {
+      if (keys_[i].IsNull() && other.keys_[i].IsNull()) {
+        continue;
+      }
+      if (keys_[i].IsNull() != other.keys_[i].IsNull()) {
+        return false;
+      }
+      if (keys_[i].CompareEquals(other.keys_[i]) != CmpBool::CmpTrue) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
+
+}  // namespace bustub
+
+namespace std {
+template <>
+struct hash<bustub::WindowPartitionKey> {
+  auto operator()(const bustub::WindowPartitionKey &key) const -> std::size_t {
+    size_t curr_hash = 0;
+    for (const auto &val : key.keys_) {
+      if (!val.IsNull()) {
+        curr_hash = bustub::HashUtil::CombineHashes(curr_hash, bustub::HashUtil::HashValue(&val));
+      }
+    }
+    return curr_hash;
+  }
+};
+}  // namespace std
+
+
+
+namespace bustub {
+
+
 class WindowFunctionExecutor : public AbstractExecutor {
  public:
   WindowFunctionExecutor(ExecutorContext *exec_ctx, const WindowFunctionPlanNode *plan,
@@ -79,5 +122,7 @@ class WindowFunctionExecutor : public AbstractExecutor {
 
   /** The child executor from which tuples are obtained */
   std::unique_ptr<AbstractExecutor> child_executor_;
+  std::vector<Tuple> output_tuples_;
+  size_t output_idx_{0};
 };
 }  // namespace bustub
